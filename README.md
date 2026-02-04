@@ -186,15 +186,14 @@ pnpm inspect
 
 无参数，返回所有可用的OSS配置名称。
 
-### 3. 批量重命名文件 (`batch_rename_files`)
+### 3. 批量重命名OSS文件 (`batch_rename_files`)
 
-批量重命名文件，支持本地文件和阿里云OSS文件。OSS重命名通过 copy + delete 实现。
+批量重命名阿里云OSS文件，通过 copy + delete 实现。
 
 **参数**:
-- `directory`: 要操作的目录路径（必需）。本地文件为本地路径，OSS文件为OSS中的目录路径（如 `images/icons`）
+- `directory`: OSS中的目录路径（必需），如 `images/icons`，根目录传空字符串 `''`
 - `renameRules`: 重命名规则数组，每项包含 `oldName` 和 `newName`（必需）
-- `source`: 文件来源（可选）：`local` 为本地文件（默认），`oss` 为阿里云OSS文件
-- `configName`: OSS配置名称（可选，仅 `source='oss'` 时有效，默认为 `default`）
+- `configName`: OSS配置名称（可选，默认为 `default`）
 - `dryRun`: 是否为预览模式（可选，默认 false）。为 true 时只返回将要执行的操作，不实际重命名
 
 ### 4. 列出目录文件 (`list_directory_files`)
