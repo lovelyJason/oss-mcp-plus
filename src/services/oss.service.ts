@@ -151,6 +151,88 @@ export class OssService {
       });
     }
   }
+
+  /**
+   * 重命名OSS文件（通过 copy + delete 实现）
+   * @param oldKey 原文件路径
+   * @param newKey 新文件路径
+   * @param configName 配置名称
+   * @returns 重命名结果
+   */
+  async renameFile(oldKey: string, newKey: string, configName: string = 'default'): Promise<{ success: boolean; error?: string }> {
+    try {
+      const client = this.getClient(configName);
+      if (!client) {
+        return { success: false, error: `OSS config not found for: ${configName}` };
+      }
+
+      // 规范化路径：移除开头的斜杠
+      const normalizedOldKey = oldKey.replace(/^\/+/, '');
+      const normalizedNewKey = newKey.replace(/^\/+/, '');
+
+      // 检查源文件是否存在
+      try {
+        await client.head(normalizedOldKey);
+      } catch (_e) {
+        return { success: false, error: `源文件不存在: ${normalizedOldKey}` };
+      }
+
+      // 检查目标文件是否已存在
+      try {
+        await client.head(normalizedNewKey);
+        // 如果到这里说明文件存在
+        if (normalizedOldKey !== normalizedNewKey) {
+          return { success: false, error: `目标文件已存在: ${normalizedNewKey}` };
+        }
+      } catch (_e) {
+        // 文件不存在，可以继续
+      }
+
+      // Step 1: 复制文件到新位置
+      await client.copy(normalizedNewKey, normalizedOldKey);
+
+      // Step 2: 删除原文件
+      await client.delete(normalizedOldKey);
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: `重命名失败: ${(error as Error).message}` };
+    }
+  }
+
+  /**
+   * 批量重命名OSS文件
+   * @param rules 重命名规则数组
+   * @param directory OSS目录路径
+   * @param configName 配置名称
+   * @returns 批量重命名结果
+   */
+  async batchRenameFiles(
+    rules: Array<{ oldName: string; newName: string }>,
+    directory: string = '',
+    configName: string = 'default'
+  ): Promise<Array<{ oldName: string; newName: string; success: boolean; error?: string }>> {
+    const results: Array<{ oldName: string; newName: string; success: boolean; error?: string }> = [];
+
+    // 规范化目录路径
+    const normalizedDir = directory.replace(/^\/+|\/+$/g, '');
+    const dirPrefix = normalizedDir ? `${normalizedDir}/` : '';
+
+    for (const rule of rules) {
+      const oldKey = `${dirPrefix}${rule.oldName}`;
+      const newKey = `${dirPrefix}${rule.newName}`;
+
+      const result = await this.renameFile(oldKey, newKey, configName);
+      results.push({
+        oldName: rule.oldName,
+        newName: rule.newName,
+        success: result.success,
+        error: result.error
+      });
+    }
+
+    return results;
+  }
 }
 
 // 导出单例实例

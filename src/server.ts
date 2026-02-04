@@ -148,83 +148,101 @@ export class OssMcpServer {
       }
     );
 
-    // 工具：批量重命名文件
+    // 工具：批量重命名文件（支持本地文件和OSS文件）
     this.server.tool(
       "batch_rename_files",
-      "根据自然语言描述批量重命名文件。支持指定目录下的文件批量重命名，AI会理解你的重命名意图并执行。",
+      "批量重命名文件。支持本地文件和阿里云OSS文件重命名。OSS重命名通过copy+delete实现。",
       {
-        directory: z.string().describe("要操作的目录路径"),
+        directory: z.string().describe("要操作的目录路径。本地文件为本地路径，OSS文件为OSS中的目录路径（如 'images/icons'）"),
         renameRules: z.array(z.object({
           oldName: z.string().describe("原文件名"),
           newName: z.string().describe("新文件名")
         })).describe("重命名规则数组，每项包含原文件名和新文件名"),
+        source: z.enum(['local', 'oss']).optional().describe("文件来源：'local'为本地文件（默认），'oss'为阿里云OSS文件"),
+        configName: z.string().optional().describe(`OSS配置名称（仅source='oss'时有效，默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`),
         dryRun: z.boolean().optional().describe("是否为预览模式（默认false）。为true时只返回将要执行的操作，不实际重命名")
       },
-      async ({ directory, renameRules, dryRun = false }) => {
+      async ({ directory, renameRules, source = 'local', configName = 'default', dryRun = false }) => {
         try {
-          Logger.log(`批量重命名: 目录=${directory}, 规则数=${renameRules.length}, 预览模式=${dryRun}`);
+          Logger.log(`批量重命名: 来源=${source}, 目录=${directory}, 规则数=${renameRules.length}, 预览模式=${dryRun}`);
 
-          // 检查目录是否存在
-          if (!fs.existsSync(directory)) {
-            throw new Error(`目录不存在: ${directory}`);
-          }
+          let results: { oldName: string; newName: string; success: boolean; error?: string }[] = [];
 
-          const stat = fs.statSync(directory);
-          if (!stat.isDirectory()) {
-            throw new Error(`路径不是目录: ${directory}`);
-          }
-
-          const results: { oldName: string; newName: string; success: boolean; error?: string }[] = [];
-
-          for (const rule of renameRules) {
-            const oldPath = path.join(directory, rule.oldName);
-            const newPath = path.join(directory, rule.newName);
-
-            // 检查源文件是否存在
-            if (!fs.existsSync(oldPath)) {
-              results.push({
-                oldName: rule.oldName,
-                newName: rule.newName,
-                success: false,
-                error: '源文件不存在'
-              });
-              continue;
-            }
-
-            // 检查目标文件是否已存在
-            if (fs.existsSync(newPath) && oldPath !== newPath) {
-              results.push({
-                oldName: rule.oldName,
-                newName: rule.newName,
-                success: false,
-                error: '目标文件名已存在'
-              });
-              continue;
-            }
-
+          if (source === 'oss') {
+            // OSS文件重命名
             if (dryRun) {
-              // 预览模式，不实际执行
-              results.push({
+              // 预览模式：只返回将要执行的操作
+              results = renameRules.map(rule => ({
                 oldName: rule.oldName,
                 newName: rule.newName,
                 success: true
-              });
+              }));
             } else {
-              // 实际执行重命名
-              try {
-                fs.renameSync(oldPath, newPath);
+              // 实际执行OSS重命名
+              results = await ossService.batchRenameFiles(renameRules, directory, configName);
+            }
+          } else {
+            // 本地文件重命名
+            // 检查目录是否存在
+            if (!fs.existsSync(directory)) {
+              throw new Error(`目录不存在: ${directory}`);
+            }
+
+            const stat = fs.statSync(directory);
+            if (!stat.isDirectory()) {
+              throw new Error(`路径不是目录: ${directory}`);
+            }
+
+            for (const rule of renameRules) {
+              const oldPath = path.join(directory, rule.oldName);
+              const newPath = path.join(directory, rule.newName);
+
+              // 检查源文件是否存在
+              if (!fs.existsSync(oldPath)) {
+                results.push({
+                  oldName: rule.oldName,
+                  newName: rule.newName,
+                  success: false,
+                  error: '源文件不存在'
+                });
+                continue;
+              }
+
+              // 检查目标文件是否已存在
+              if (fs.existsSync(newPath) && oldPath !== newPath) {
+                results.push({
+                  oldName: rule.oldName,
+                  newName: rule.newName,
+                  success: false,
+                  error: '目标文件名已存在'
+                });
+                continue;
+              }
+
+              if (dryRun) {
+                // 预览模式，不实际执行
                 results.push({
                   oldName: rule.oldName,
                   newName: rule.newName,
                   success: true
                 });
-              } catch (err) {
-                results.push({
-                  oldName: rule.oldName,
-                  newName: rule.newName,
-                  success: false,
-                  error: String(err)
-                });
+              } else {
+                // 实际执行重命名
+                try {
+                  fs.renameSync(oldPath, newPath);
+                  results.push({
+                    oldName: rule.oldName,
+                    newName: rule.newName,
+                    success: true
+                  });
+                } catch (err) {
+                  results.push({
+                    oldName: rule.oldName,
+                    newName: rule.newName,
+                    success: false,
+                    error: String(err)
+                  });
+                }
               }
             }
           }
@@ -232,7 +250,9 @@ export class OssMcpServer {
           const successCount = results.filter(r => r.success).length;
           const failCount = results.filter(r => !r.success).length;
 
-          let resultText = dryRun ? '【预览模式】以下是将要执行的重命名操作:\n\n' : '批量重命名完成:\n\n';
+          const sourceText = source === 'oss' ? `OSS (配置: ${configName})` : '本地';
+          let resultText = dryRun ? `【预览模式】以下是将要执行的${sourceText}文件重命名操作:\n\n` : `${sourceText}文件批量重命名完成:\n\n`;
+          resultText += `目录: ${directory}\n`;
           resultText += `成功: ${successCount} 个, 失败: ${failCount} 个\n\n`;
 
           if (results.length > 0) {
