@@ -151,7 +151,7 @@ export class OssMcpServer {
     // 工具：批量重命名OSS文件
     this.server.tool(
       "batch_rename_files",
-      "批量重命名阿里云OSS文件。通过copy+delete实现，支持单个或批量重命名。",
+      "批量重命名阿里云OSS文件。通过copy+delete实现。【重要】首次调用必须使用dryRun=true预览，展示给用户确认后，用户同意才能用dryRun=false执行实际重命名。禁止跳过预览直接执行！",
       {
         directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
         renameRules: z.array(z.object({
