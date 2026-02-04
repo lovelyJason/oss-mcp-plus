@@ -7,6 +7,8 @@ import { IncomingMessage, ServerResponse } from "http";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
+import http from 'http';
 
 export const Logger = {
   log: (...args: any[]) => {
@@ -140,6 +142,360 @@ export class OssMcpServer {
             content: [{
               type: "text",
               text: `获取配置列表失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
+    // 工具：批量重命名文件
+    this.server.tool(
+      "batch_rename_files",
+      "根据自然语言描述批量重命名文件。支持指定目录下的文件批量重命名，AI会理解你的重命名意图并执行。",
+      {
+        directory: z.string().describe("要操作的目录路径"),
+        renameRules: z.array(z.object({
+          oldName: z.string().describe("原文件名"),
+          newName: z.string().describe("新文件名")
+        })).describe("重命名规则数组，每项包含原文件名和新文件名"),
+        dryRun: z.boolean().optional().describe("是否为预览模式（默认false）。为true时只返回将要执行的操作，不实际重命名")
+      },
+      async ({ directory, renameRules, dryRun = false }) => {
+        try {
+          Logger.log(`批量重命名: 目录=${directory}, 规则数=${renameRules.length}, 预览模式=${dryRun}`);
+
+          // 检查目录是否存在
+          if (!fs.existsSync(directory)) {
+            throw new Error(`目录不存在: ${directory}`);
+          }
+
+          const stat = fs.statSync(directory);
+          if (!stat.isDirectory()) {
+            throw new Error(`路径不是目录: ${directory}`);
+          }
+
+          const results: { oldName: string; newName: string; success: boolean; error?: string }[] = [];
+
+          for (const rule of renameRules) {
+            const oldPath = path.join(directory, rule.oldName);
+            const newPath = path.join(directory, rule.newName);
+
+            // 检查源文件是否存在
+            if (!fs.existsSync(oldPath)) {
+              results.push({
+                oldName: rule.oldName,
+                newName: rule.newName,
+                success: false,
+                error: '源文件不存在'
+              });
+              continue;
+            }
+
+            // 检查目标文件是否已存在
+            if (fs.existsSync(newPath) && oldPath !== newPath) {
+              results.push({
+                oldName: rule.oldName,
+                newName: rule.newName,
+                success: false,
+                error: '目标文件名已存在'
+              });
+              continue;
+            }
+
+            if (dryRun) {
+              // 预览模式，不实际执行
+              results.push({
+                oldName: rule.oldName,
+                newName: rule.newName,
+                success: true
+              });
+            } else {
+              // 实际执行重命名
+              try {
+                fs.renameSync(oldPath, newPath);
+                results.push({
+                  oldName: rule.oldName,
+                  newName: rule.newName,
+                  success: true
+                });
+              } catch (err) {
+                results.push({
+                  oldName: rule.oldName,
+                  newName: rule.newName,
+                  success: false,
+                  error: String(err)
+                });
+              }
+            }
+          }
+
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.filter(r => !r.success).length;
+
+          let resultText = dryRun ? '【预览模式】以下是将要执行的重命名操作:\n\n' : '批量重命名完成:\n\n';
+          resultText += `成功: ${successCount} 个, 失败: ${failCount} 个\n\n`;
+
+          if (results.length > 0) {
+            resultText += '详细结果:\n';
+            for (const r of results) {
+              if (r.success) {
+                resultText += `✅ ${r.oldName} → ${r.newName}\n`;
+              } else {
+                resultText += `❌ ${r.oldName} → ${r.newName} (${r.error})\n`;
+              }
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: resultText
+            }]
+          };
+        } catch (error) {
+          Logger.error(`批量重命名出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `批量重命名失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
+    // 工具：列出目录文件
+    this.server.tool(
+      "list_directory_files",
+      "列出指定目录下的所有文件，用于查看当前文件名以便进行重命名操作",
+      {
+        directory: z.string().describe("要查看的目录路径"),
+        pattern: z.string().optional().describe("文件名过滤模式（可选），如 '*.png' 或 'icon_*'")
+      },
+      async ({ directory, pattern }) => {
+        try {
+          Logger.log(`列出目录文件: ${directory}, 过滤: ${pattern || '无'}`);
+
+          // 检查目录是否存在
+          if (!fs.existsSync(directory)) {
+            throw new Error(`目录不存在: ${directory}`);
+          }
+
+          const stat = fs.statSync(directory);
+          if (!stat.isDirectory()) {
+            throw new Error(`路径不是目录: ${directory}`);
+          }
+
+          let files = fs.readdirSync(directory);
+
+          // 过滤掉隐藏文件
+          files = files.filter(f => !f.startsWith('.'));
+
+          // 如果有 pattern，进行简单的通配符匹配
+          if (pattern) {
+            const regex = new RegExp(
+              '^' + pattern
+                .replace(/\./g, '\\.')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.') + '$',
+              'i'
+            );
+            files = files.filter(f => regex.test(f));
+          }
+
+          // 获取文件信息
+          const fileInfos = files.map(f => {
+            const filePath = path.join(directory, f);
+            const fileStat = fs.statSync(filePath);
+            return {
+              name: f,
+              isDirectory: fileStat.isDirectory(),
+              size: fileStat.size
+            };
+          });
+
+          // 排序：目录在前，文件在后，按名称排序
+          fileInfos.sort((a, b) => {
+            if (a.isDirectory !== b.isDirectory) {
+              return a.isDirectory ? -1 : 1;
+            }
+            return a.name.localeCompare(b.name);
+          });
+
+          if (fileInfos.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `目录 ${directory} 下没有找到匹配的文件${pattern ? ` (过滤: ${pattern})` : ''}`
+              }]
+            };
+          }
+
+          let resultText = `目录: ${directory}\n`;
+          if (pattern) {
+            resultText += `过滤: ${pattern}\n`;
+          }
+          resultText += `共 ${fileInfos.length} 个项目:\n\n`;
+
+          for (const f of fileInfos) {
+            if (f.isDirectory) {
+              resultText += `📁 ${f.name}/\n`;
+            } else {
+              const sizeStr = f.size < 1024
+                ? `${f.size}B`
+                : f.size < 1024 * 1024
+                  ? `${(f.size / 1024).toFixed(1)}KB`
+                  : `${(f.size / 1024 / 1024).toFixed(1)}MB`;
+              resultText += `📄 ${f.name} (${sizeStr})\n`;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: resultText
+            }]
+          };
+        } catch (error) {
+          Logger.error(`列出目录文件出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `列出目录失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
+    // 工具：下载文件
+    this.server.tool(
+      "download_file",
+      "从 URL 下载文件到本地目录。支持 HTTP/HTTPS 链接，可自定义保存文件名。",
+      {
+        url: z.string().describe("要下载的文件 URL"),
+        targetDir: z.string().describe("保存文件的本地目录路径"),
+        fileName: z.string().optional().describe("保存的文件名（可选，默认从 URL 提取）")
+      },
+      async ({ url, targetDir, fileName }) => {
+        try {
+          Logger.log(`下载文件: ${url} 到 ${targetDir}`);
+
+          // 检查目录是否存在，不存在则创建
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+            Logger.log(`创建目录: ${targetDir}`);
+          }
+
+          const stat = fs.statSync(targetDir);
+          if (!stat.isDirectory()) {
+            throw new Error(`路径不是目录: ${targetDir}`);
+          }
+
+          // 从 URL 提取文件名
+          let finalFileName = fileName;
+          if (!finalFileName) {
+            const urlObj = new URL(url);
+            finalFileName = path.basename(urlObj.pathname);
+            // 如果 URL 没有文件名，生成一个
+            if (!finalFileName || finalFileName === '/') {
+              finalFileName = `download_${Date.now()}`;
+            }
+          }
+
+          const filePath = path.join(targetDir, finalFileName);
+
+          // 检查文件是否已存在
+          if (fs.existsSync(filePath)) {
+            throw new Error(`文件已存在: ${filePath}`);
+          }
+
+          // 下载文件
+          await new Promise<void>((resolve, reject) => {
+            const urlObj = new URL(url);
+            const protocol = urlObj.protocol === 'https:' ? https : http;
+
+            const request = protocol.get(url, (response) => {
+              // 处理重定向
+              if (response.statusCode === 301 || response.statusCode === 302) {
+                const redirectUrl = response.headers.location;
+                if (redirectUrl) {
+                  Logger.log(`重定向到: ${redirectUrl}`);
+                  const redirectProtocol = redirectUrl.startsWith('https:') ? https : http;
+                  redirectProtocol.get(redirectUrl, (redirectResponse) => {
+                    if (redirectResponse.statusCode !== 200) {
+                      reject(new Error(`下载失败，HTTP 状态码: ${redirectResponse.statusCode}`));
+                      return;
+                    }
+                    const fileStream = fs.createWriteStream(filePath);
+                    redirectResponse.pipe(fileStream);
+                    fileStream.on('finish', () => {
+                      fileStream.close();
+                      resolve();
+                    });
+                    fileStream.on('error', (err) => {
+                      fs.unlink(filePath, () => {});
+                      reject(err);
+                    });
+                  }).on('error', reject);
+                  return;
+                }
+              }
+
+              if (response.statusCode !== 200) {
+                reject(new Error(`下载失败，HTTP 状态码: ${response.statusCode}`));
+                return;
+              }
+
+              const fileStream = fs.createWriteStream(filePath);
+              response.pipe(fileStream);
+
+              fileStream.on('finish', () => {
+                fileStream.close();
+                resolve();
+              });
+
+              fileStream.on('error', (err) => {
+                fs.unlink(filePath, () => {});
+                reject(err);
+              });
+            });
+
+            request.on('error', (err) => {
+              fs.unlink(filePath, () => {});
+              reject(err);
+            });
+
+            request.setTimeout(60000, () => {
+              request.destroy();
+              fs.unlink(filePath, () => {});
+              reject(new Error('下载超时（60秒）'));
+            });
+          });
+
+          // 获取文件大小
+          const downloadedStat = fs.statSync(filePath);
+          const sizeStr = downloadedStat.size < 1024
+            ? `${downloadedStat.size}B`
+            : downloadedStat.size < 1024 * 1024
+              ? `${(downloadedStat.size / 1024).toFixed(1)}KB`
+              : `${(downloadedStat.size / 1024 / 1024).toFixed(1)}MB`;
+
+          return {
+            content: [{
+              type: "text",
+              text: `文件下载成功!\n源URL: ${url}\n保存路径: ${filePath}\n文件大小: ${sizeStr}`
+            }]
+          };
+        } catch (error) {
+          Logger.error(`下载文件出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `下载失败: ${error}`
             }]
           };
         }

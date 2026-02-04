@@ -1,10 +1,8 @@
-# OSS MCP 服务器 🚀
+# OSS MCP Plus 🚀
 
-中文版 | [English](README.en.md)
+> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载等实用工具。
 
-![oss-mcp](https://yhyblog-2023-2-8.oss-cn-hangzhou.aliyuncs.com/2025/2025-03-23/20250323221657.png)
-
-一个基于Model Context Protocol (MCP)的服务器，用于将文件上传到阿里云OSS。此服务器使大型语言模型能够直接将文件上传到阿里云对象存储服务。
+一个基于 Model Context Protocol (MCP) 的服务器，用于将文件上传到阿里云 OSS。此服务器使大型语言模型能够直接将文件上传到阿里云对象存储服务，并提供文件管理相关的实用工具。
 
 ## 💡 使用场景
 
@@ -19,9 +17,12 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 
 ## ✨ 功能特点
 
-- 📁 支持多个阿里云OSS配置
+- 📁 支持多个阿里云 OSS 配置
 - 🗂️ 可指定上传目录
 - 🔄 简单易用的接口
+- 📥 支持从 URL 下载文件到本地
+- 📂 列出目录文件，支持通配符过滤
+- ✏️ 批量重命名文件，支持预览模式
 
 ## 🔧 安装
 
@@ -31,28 +32,28 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 
 ```bash
 # 使用npm全局安装
-npm install -g oss-mcp
+npm install -g oss-mcp-plus
 
 # 或使用pnpm全局安装
-pnpm add -g oss-mcp
+pnpm add -g oss-mcp-plus
 ```
 
 ### 使用示例
 
 ```bash
 # 直接启动 (stdio模式)
-oss-mcp --oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}}'
+oss-mcp-plus --oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}}'
 
 
 # 使用Inspector调试
-oss-mcp --oss-config='{ "region": "oss-cn-shenzhen", "accessKeyId": "YOUR_KEY", "accessKeySecret": "YOUR_SECRET", "bucket": "BUCKET_NAME", "endpoint": "oss-cn-shenzhen.aliyuncs.com" }' --inspect
+oss-mcp-plus --oss-config='{ "region": "oss-cn-shenzhen", "accessKeyId": "YOUR_KEY", "accessKeySecret": "YOUR_SECRET", "bucket": "BUCKET_NAME", "endpoint": "oss-cn-shenzhen.aliyuncs.com" }' --inspect
 ```
 
 ### 从源码安装
 
 ```bash
 # 克隆仓库
-git clone https://github.com/1yhy/oss-mcp.git
+git clone https://github.com/lovelyJason/oss-mcp.git
 cd oss-mcp
 
 # 安装依赖
@@ -136,10 +137,10 @@ pnpm inspect
 ```json
 {
   "mcpServers": {
-    "oss-mcp": {
+    "oss-mcp-plus": {
       "command": "npx",
       "args": [
-        "oss-mcp",
+        "oss-mcp-plus",
         "--oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}}'",
         "--stdio"
       ]
@@ -155,10 +156,10 @@ pnpm inspect
 ```json
 {
   "mcpServers": {
-    "oss-mcp": {
+    "oss-mcp-plus": {
       "command": "npx",
       "args": [
-        "oss-mcp",
+        "oss-mcp-plus",
         "--oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}, \"test\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}}'",
         "--stdio"
       ]
@@ -183,6 +184,32 @@ pnpm inspect
 
 无参数，返回所有可用的OSS配置名称。
 
+### 3. 批量重命名文件 (`batch_rename_files`)
+
+根据规则批量重命名指定目录下的文件，支持预览模式。
+
+**参数**:
+- `directory`: 要操作的目录路径（必需）
+- `renameRules`: 重命名规则数组，每项包含 `oldName` 和 `newName`（必需）
+- `dryRun`: 是否为预览模式（可选，默认 false）。为 true 时只返回将要执行的操作，不实际重命名
+
+### 4. 列出目录文件 (`list_directory_files`)
+
+列出指定目录下的所有文件，用于查看当前文件名以便进行重命名操作。
+
+**参数**:
+- `directory`: 要查看的目录路径（必需）
+- `pattern`: 文件名过滤模式（可选），如 `*.png` 或 `icon_*`
+
+### 5. 下载文件 (`download_file`)
+
+从 URL 下载文件到本地目录，支持 HTTP/HTTPS 链接。
+
+**参数**:
+- `url`: 要下载的文件 URL（必需）
+- `targetDir`: 保存文件的本地目录路径（必需）
+- `fileName`: 保存的文件名（可选，默认从 URL 提取）
+
 ## 📦 发布
 
 ```bash
@@ -193,10 +220,10 @@ pnpm pub:release
 pnpm publish:local
 ```
 
-## 📊 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=1yhy/oss-mcp&type=Date)](https://star-history.com/#1yhy/oss-mcp&Date)
-
 ## 📄 许可证
 
 [MIT](LICENSE)
+
+## 🙏 致谢
+
+本项目基于 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp) 开发，感谢原作者的贡献！
