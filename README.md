@@ -59,8 +59,8 @@ oss-mcp-plus --oss-config='{ "region": "oss-cn-shenzhen", "accessKeyId": "YOUR_K
 
 ```bash
 # 克隆仓库
-git clone https://github.com/lovelyJason/oss-mcp.git
-cd oss-mcp
+git clone https://github.com/lovelyJason/oss-mcp-plus.git
+cd oss-mcp-plus
 
 # 安装依赖
 pnpm install
