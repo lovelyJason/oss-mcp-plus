@@ -4,9 +4,17 @@
 
 <img width="1280" height="2034" alt="image" src="https://github.com/user-attachments/assets/c03c3716-109b-49a5-ab7c-113a6777c868" />
 
-批量重命名：
+**批量重命名**：
 
 ![oss-mcp-plus](https://github.com/user-attachments/assets/62689a86-92c8-4475-aa59-dde6eabd5bb2)
+
+
+**压缩图片**：
+
+内置tinypng和anywebp压缩引擎，会自动启用playwright mcp，进行oss上的图片压缩操作
+
+<img width="758" height="699" alt="image" src="https://github.com/user-attachments/assets/e0d1c221-18c8-44dd-a76a-c87e75647830" />
+
 
 一个基于 Model Context Protocol (MCP) 的服务器，用于将文件上传到阿里云 OSS。此服务器使大型语言模型能够直接将文件上传到阿里云对象存储服务，并提供文件管理相关的实用工具。
 
