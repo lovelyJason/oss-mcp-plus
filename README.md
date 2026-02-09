@@ -1,6 +1,6 @@
 # OSS MCP Plus 🚀
 
-> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载等实用工具。
+> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载，以及图片批量压缩等实用重磅工具。
 
 <img width="1280" height="2034" alt="image" src="https://github.com/user-attachments/assets/c03c3716-109b-49a5-ab7c-113a6777c868" />
 
@@ -133,7 +133,7 @@ pnpm start:http
 pnpm inspect
 ```
 
-## 🛠️ 与Claude/Cursor配置集成
+## 🛠️ 与Claude/Cursor等AI工具集成
 
 ### Cursor配置方法
 
@@ -174,6 +174,12 @@ pnpm inspect
   }
 }
 ```
+
+### 推荐方式：使用 MCP Switch 客户端
+
+借助本作者的另一客户端软件 [MCP Switch](https://github.com/lovelyJason/mcp-switch)，可以通过可视化界面轻松添加和管理 MCP 服务器：
+
+![MCP Switch 界面](https://github.com/user-attachments/assets/b1630964-08ea-4dde-8ded-6fa00cf590bc)
 
 ## 🧰 可用工具
 

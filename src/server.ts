@@ -454,14 +454,158 @@ export class OssMcpServer {
       }
     );
 
+    // 工具：检查压缩图片的前置条件
+    this.server.tool(
+      "check_compress_prerequisites",
+      `检查图片压缩的前置条件。在调用 compress_images 之前必须先调用此工具！
+
+此工具会检查：
+1. Playwright MCP 是否可用（通过尝试调用 browser_snapshot）
+2. 返回需要 AI 向用户询问的问题
+
+【重要】AI 必须按以下流程操作：
+1. 先调用此工具检查前置条件
+2. 根据返回的 questions 使用 AskUserQuestion 询问用户
+3. 收集用户选择后再调用 compress_images`,
+      {
+        images: z.array(z.string()).describe("要压缩的本地图片路径数组（用于验证文件存在）")
+      },
+      async ({ images }) => {
+        try {
+          // 验证图片文件
+          const validImages: { path: string; name: string; ext: string; size: number }[] = [];
+          const errors: string[] = [];
+
+          for (const imgPath of images) {
+            if (!fs.existsSync(imgPath)) {
+              errors.push(`文件不存在: ${imgPath}`);
+              continue;
+            }
+            const stat = fs.statSync(imgPath);
+            if (stat.size > 5 * 1024 * 1024) {
+              errors.push(`文件超过 5MB 限制: ${imgPath}`);
+              continue;
+            }
+            const ext = path.extname(imgPath).toLowerCase().slice(1);
+            if (!['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'].includes(ext)) {
+              errors.push(`不支持的格式: ${imgPath}`);
+              continue;
+            }
+            validImages.push({
+              path: imgPath,
+              name: path.basename(imgPath, path.extname(imgPath)),
+              ext: ext === 'jpg' ? 'jpeg' : ext,
+              size: stat.size
+            });
+          }
+
+          if (validImages.length === 0) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `没有有效的图片可处理:\n${errors.join('\n')}`
+              }]
+            };
+          }
+
+          // 构建需要询问用户的问题
+          const questions = {
+            playwrightCheck: {
+              instruction: "请先使用 browser_snapshot 工具测试 Playwright MCP 是否可用。如果报错说明未配置。"
+            },
+            engineQuestion: {
+              question: "请选择压缩引擎",
+              header: "压缩引擎",
+              options: [
+                { label: "TinyPNG (推荐)", description: "支持 PNG/JPEG/WebP 输出，压缩质量高，每批最多 3 个文件" },
+                { label: "AnyWebP", description: "固定输出 WebP 格式，每批最多 20 个文件" }
+              ]
+            },
+            formatQuestion: {
+              question: "是否需要转换输出格式？",
+              header: "输出格式",
+              options: [
+                { label: "保持原格式", description: "不转换格式，仅压缩" },
+                { label: "转换为 WebP", description: "转换为 WebP 格式，体积更小" },
+                { label: "转换为 JPEG", description: "转换为 JPEG 格式（仅 TinyPNG）" },
+                { label: "转换为 PNG", description: "转换为 PNG 格式（仅 TinyPNG）" }
+              ]
+            },
+            deleteOriginalQuestion: {
+              question: "转换格式后是否删除原文件？",
+              header: "删除原文件",
+              options: [
+                { label: "保留原文件", description: "在 OSS 上保留原格式文件" },
+                { label: "删除原文件", description: "转换后删除 OSS 上的原格式文件" }
+              ],
+              condition: "仅当选择了转换格式时才需要询问"
+            }
+          };
+
+          const sizeStr = (size: number) => size < 1024
+            ? `${size}B`
+            : size < 1024 * 1024
+              ? `${(size / 1024).toFixed(1)}KB`
+              : `${(size / 1024 / 1024).toFixed(1)}MB`;
+
+          let resultText = `## 图片压缩前置检查\n\n`;
+          resultText += `### ✅ 有效图片 (${validImages.length} 个)\n`;
+          for (const img of validImages) {
+            resultText += `- ${path.basename(img.path)} (${sizeStr(img.size)})\n`;
+          }
+
+          if (errors.length > 0) {
+            resultText += `\n### ⚠️ 跳过的文件\n`;
+            for (const err of errors) {
+              resultText += `- ${err}\n`;
+            }
+          }
+
+          resultText += `\n### 📋 AI 执行步骤\n\n`;
+          resultText += `1. **检查 Playwright**: 调用 \`browser_snapshot\` 测试是否可用\n`;
+          resultText += `   - 如果报错，提示用户需要配置 Playwright MCP\n`;
+          resultText += `2. **询问用户**: 使用 AskUserQuestion 一次性询问以下问题:\n`;
+          resultText += `   - 选择压缩引擎 (TinyPNG / AnyWebP)\n`;
+          resultText += `   - 是否转换格式 (保持原格式 / WebP / JPEG / PNG)\n`;
+          resultText += `   - 如果转格式，是否删除原文件\n`;
+          resultText += `3. **执行压缩**: 根据用户选择调用 \`compress_images\`\n`;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: resultText
+              },
+              {
+                type: "text",
+                text: `\n---\n**询问模板 (JSON)**:\n\`\`\`json\n${JSON.stringify(questions, null, 2)}\n\`\`\``
+              }
+            ]
+          };
+        } catch (error) {
+          Logger.error(`检查前置条件出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `检查失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
     // 工具：压缩图片（生成压缩指令，由 AI 调用 Playwright MCP 执行）
     this.server.tool(
       "compress_images",
       `压缩图片工具。生成压缩指令，需配合 Playwright MCP 执行。
 
-【重要】调用此工具前，请确保：
-1. 已配置并启用 Playwright MCP
-2. 如果图片在 OSS 上，先用 download_file 下载到本地
+【重要】调用此工具前，AI 必须：
+1. 先调用 check_compress_prerequisites 检查前置条件
+2. 使用 browser_snapshot 确认 Playwright MCP 可用
+3. 使用 AskUserQuestion 询问用户选择引擎、输出格式、是否删除原文件
+4. 如果图片在 OSS 上，先用 download_file 下载到本地
 
 【工作流程】
 1. 调用此工具获取压缩指令
@@ -470,9 +614,9 @@ export class OssMcpServer {
 4. 使用 upload_to_oss 上传回 OSS`,
       {
         images: z.array(z.string()).describe("要压缩的本地图片路径数组"),
-        engine: z.enum(['tinypng', 'anywebp']).describe("压缩引擎: tinypng (支持 PNG/JPEG/WebP 输出) 或 anywebp (固定输出 WebP)"),
-        outputFormat: z.enum(['png', 'jpeg', 'webp']).optional().describe("输出格式 (仅 tinypng 有效，anywebp 固定为 webp)"),
-        deleteOriginal: z.boolean().optional().describe("转格式时是否删除原文件 (默认 false，仅当输出格式与原格式不同时生效)"),
+        engine: z.enum(['tinypng', 'anywebp']).describe("压缩引擎 (必须先询问用户选择)"),
+        outputFormat: z.enum(['png', 'jpeg', 'webp']).optional().describe("输出格式 (必须先询问用户选择，仅 tinypng 支持多格式)"),
+        deleteOriginal: z.boolean().optional().describe("转格式时是否删除原文件 (必须先询问用户选择)"),
         ossDirectory: z.string().optional().describe("OSS 目标目录 (用于上传压缩后的文件)"),
         configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
       },
