@@ -201,6 +201,76 @@ export class OssService {
   }
 
   /**
+   * 列出OSS目录下的文件
+   * @param directory OSS目录路径
+   * @param configName 配置名称
+   * @param pattern 文件名过滤模式（可选）
+   * @returns 文件列表
+   */
+  async listFiles(
+    directory: string = '',
+    configName: string = 'default',
+    pattern?: string
+  ): Promise<{ success: boolean; files?: Array<{ name: string; size: number; lastModified: Date }>; error?: string }> {
+    try {
+      const client = this.getClient(configName);
+      if (!client) {
+        return { success: false, error: `OSS config not found for: ${configName}` };
+      }
+
+      // 规范化目录路径
+      const normalizedDir = directory.replace(/^\/+|\/+$/g, '');
+      const prefix = normalizedDir ? `${normalizedDir}/` : '';
+
+      // 列出文件
+      const result = await client.list({
+        prefix,
+        delimiter: '/',
+        'max-keys': 1000
+      }, {});
+
+      const files: Array<{ name: string; size: number; lastModified: Date }> = [];
+
+      // 处理文件对象
+      if (result.objects) {
+        for (const obj of result.objects) {
+          // 跳过目录本身（以 / 结尾的）
+          if (obj.name.endsWith('/')) continue;
+
+          // 提取文件名（去掉目录前缀）
+          const fileName = obj.name.replace(prefix, '');
+          if (!fileName) continue;
+
+          // 如果有 pattern，进行简单的通配符匹配
+          if (pattern) {
+            const regex = new RegExp(
+              '^' + pattern
+                .replace(/\./g, '\\.')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.') + '$',
+              'i'
+            );
+            if (!regex.test(fileName)) continue;
+          }
+
+          files.push({
+            name: fileName,
+            size: obj.size,
+            lastModified: new Date(obj.lastModified)
+          });
+        }
+      }
+
+      // 按文件名排序
+      files.sort((a, b) => a.name.localeCompare(b.name));
+
+      return { success: true, files };
+    } catch (error) {
+      return { success: false, error: `列出文件失败: ${(error as Error).message}` };
+    }
+  }
+
+  /**
    * 批量重命名OSS文件
    * @param rules 重命名规则数组
    * @param directory OSS目录路径

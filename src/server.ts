@@ -217,10 +217,10 @@ export class OssMcpServer {
       }
     );
 
-    // 工具：列出目录文件
+    // 工具：列出本地目录文件
     this.server.tool(
       "list_directory_files",
-      "列出指定目录下的所有文件，用于查看当前文件名以便进行重命名操作",
+      "列出本地文件系统中指定目录下的所有文件。注意：此工具仅支持本地路径，如果要列出 OSS 中的文件，请使用 list_oss_files 工具。",
       {
         directory: z.string().describe("要查看的目录路径"),
         pattern: z.string().optional().describe("文件名过滤模式（可选），如 '*.png' 或 'icon_*'")
@@ -316,6 +316,78 @@ export class OssMcpServer {
             content: [{
               type: "text",
               text: `列出目录失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
+    // 工具：列出OSS目录文件
+    this.server.tool(
+      "list_oss_files",
+      "列出阿里云OSS指定目录下的所有文件。用于查看 OSS 中的文件以便进行重命名或其他操作。注意：如果要列出本地文件，请使用 list_directory_files 工具。",
+      {
+        directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
+        pattern: z.string().optional().describe("文件名过滤模式（可选），如 '*.png' 或 'icon_*'"),
+        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
+      },
+      async ({ directory, pattern, configName = 'default' }) => {
+        try {
+          Logger.log(`列出OSS目录文件: ${directory || '根目录'}, 过滤: ${pattern || '无'}, 配置: ${configName}`);
+
+          const result = await ossService.listFiles(directory, configName, pattern);
+
+          if (!result.success) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `列出OSS文件失败: ${result.error}`
+              }]
+            };
+          }
+
+          const files = result.files || [];
+
+          if (files.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `OSS目录 ${directory || '根目录'} 下没有找到匹配的文件${pattern ? ` (过滤: ${pattern})` : ''}\n配置: ${configName}`
+              }]
+            };
+          }
+
+          const sizeStr = (size: number) => size < 1024
+            ? `${size}B`
+            : size < 1024 * 1024
+              ? `${(size / 1024).toFixed(1)}KB`
+              : `${(size / 1024 / 1024).toFixed(1)}MB`;
+
+          let resultText = `OSS目录: ${directory || '根目录'}\n`;
+          resultText += `配置: ${configName}\n`;
+          if (pattern) {
+            resultText += `过滤: ${pattern}\n`;
+          }
+          resultText += `共 ${files.length} 个文件:\n\n`;
+
+          for (const f of files) {
+            resultText += `📄 ${f.name} (${sizeStr(f.size)})\n`;
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: resultText
+            }]
+          };
+        } catch (error) {
+          Logger.error(`列出OSS目录文件出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `列出OSS目录失败: ${error}`
             }]
           };
         }

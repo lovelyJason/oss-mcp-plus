@@ -27,7 +27,7 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 - 🗂️ 可指定上传目录
 - 🔄 简单易用的接口
 - 📥 支持从 URL 下载文件到本地
-- 📂 列出目录文件，支持通配符过滤
+- 📂 列出本地/OSS目录文件，支持通配符过滤
 - ✏️ 批量重命名文件，支持预览模式
 - 🗜️ 批量压缩图片（支持 TinyPNG / AnyWebP）
 
@@ -207,15 +207,26 @@ pnpm inspect
 - `configName`: OSS配置名称（可选，默认为 `default`）
 - `dryRun`: 是否为预览模式（可选，默认 false）。为 true 时只返回将要执行的操作，不实际重命名
 
-### 4. 列出目录文件 (`list_directory_files`)
+### 4. 列出本地目录文件 (`list_directory_files`)
 
-列出指定目录下的所有文件，用于查看当前文件名以便进行重命名操作。
+列出**本地文件系统**中指定目录下的所有文件。
 
 **参数**:
-- `directory`: 要查看的目录路径（必需）
+- `directory`: 本地目录路径（必需）
 - `pattern`: 文件名过滤模式（可选），如 `*.png` 或 `icon_*`
 
-### 5. 下载文件 (`download_file`)
+> ⚠️ **注意**: 此工具仅支持本地文件系统路径。如果要列出 OSS 中的文件，请使用 `list_oss_files`。
+
+### 5. 列出OSS目录文件 (`list_oss_files`) 🆕
+
+列出**阿里云OSS**中指定目录下的所有文件。
+
+**参数**:
+- `directory`: OSS中的目录路径（必需），如 `images/icons`，根目录传空字符串 `''`
+- `pattern`: 文件名过滤模式（可选），如 `*.png` 或 `icon_*`
+- `configName`: OSS配置名称（可选，默认为 `default`）
+
+### 6. 下载文件 (`download_file`)
 
 从 URL 下载文件到本地目录，支持 HTTP/HTTPS 链接。
 
@@ -224,7 +235,7 @@ pnpm inspect
 - `targetDir`: 保存文件的本地目录路径（必需）
 - `fileName`: 保存的文件名（可选，默认从 URL 提取）
 
-### 6. 压缩图片 (`compress_images`) 🆕
+### 7. 压缩图片 (`compress_images`)
 
 批量压缩图片工具，支持 TinyPNG 和 AnyWebP 两个在线压缩引擎。需配合 Playwright MCP 使用。
 
