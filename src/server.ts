@@ -453,6 +453,234 @@ export class OssMcpServer {
         }
       }
     );
+
+    // 工具：压缩图片（生成压缩指令，由 AI 调用 Playwright MCP 执行）
+    this.server.tool(
+      "compress_images",
+      `压缩图片工具。生成压缩指令，需配合 Playwright MCP 执行。
+
+【重要】调用此工具前，请确保：
+1. 已配置并启用 Playwright MCP
+2. 如果图片在 OSS 上，先用 download_file 下载到本地
+
+【工作流程】
+1. 调用此工具获取压缩指令
+2. 按指令使用 Playwright MCP 执行网页自动化
+3. 下载压缩结果到本地
+4. 使用 upload_to_oss 上传回 OSS`,
+      {
+        images: z.array(z.string()).describe("要压缩的本地图片路径数组"),
+        engine: z.enum(['tinypng', 'anywebp']).describe("压缩引擎: tinypng (支持 PNG/JPEG/WebP 输出) 或 anywebp (固定输出 WebP)"),
+        outputFormat: z.enum(['png', 'jpeg', 'webp']).optional().describe("输出格式 (仅 tinypng 有效，anywebp 固定为 webp)"),
+        deleteOriginal: z.boolean().optional().describe("转格式时是否删除原文件 (默认 false，仅当输出格式与原格式不同时生效)"),
+        ossDirectory: z.string().optional().describe("OSS 目标目录 (用于上传压缩后的文件)"),
+        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
+      },
+      async ({ images, engine, outputFormat, deleteOriginal = false, ossDirectory, configName = 'default' }) => {
+        try {
+          Logger.log(`压缩图片: 引擎=${engine}, 格式=${outputFormat || '原格式'}, 图片数=${images.length}`);
+
+          // 验证图片文件存在
+          const validImages: { path: string; name: string; ext: string; size: number }[] = [];
+          const errors: string[] = [];
+
+          for (const imgPath of images) {
+            if (!fs.existsSync(imgPath)) {
+              errors.push(`文件不存在: ${imgPath}`);
+              continue;
+            }
+            const stat = fs.statSync(imgPath);
+            if (stat.size > 5 * 1024 * 1024) {
+              errors.push(`文件超过 5MB 限制: ${imgPath}`);
+              continue;
+            }
+            const ext = path.extname(imgPath).toLowerCase().slice(1);
+            if (!['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'].includes(ext)) {
+              errors.push(`不支持的格式: ${imgPath}`);
+              continue;
+            }
+            validImages.push({
+              path: imgPath,
+              name: path.basename(imgPath, path.extname(imgPath)),
+              ext: ext === 'jpg' ? 'jpeg' : ext,
+              size: stat.size
+            });
+          }
+
+          if (validImages.length === 0) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `没有有效的图片可处理:\n${errors.join('\n')}`
+              }]
+            };
+          }
+
+          // 生成压缩指令
+          const actualOutputFormat = engine === 'anywebp' ? 'webp' : (outputFormat || null);
+          const batchSize = engine === 'tinypng' ? 3 : 20;
+          const batches: typeof validImages[] = [];
+
+          for (let i = 0; i < validImages.length; i += batchSize) {
+            batches.push(validImages.slice(i, i + batchSize));
+          }
+
+          // 构建指令文本
+          let instructions = `## 图片压缩指令\n\n`;
+          instructions += `**引擎**: ${engine === 'tinypng' ? 'TinyPNG (https://tinypng.com/)' : 'AnyWebP (https://anywebp.com/convert-to-webp)'}\n`;
+          instructions += `**输出格式**: ${actualOutputFormat || '保持原格式'}\n`;
+          instructions += `**总图片数**: ${validImages.length}\n`;
+          instructions += `**批次数**: ${batches.length} (每批最多 ${batchSize} 个)\n\n`;
+
+          if (errors.length > 0) {
+            instructions += `### ⚠️ 跳过的文件\n`;
+            for (const err of errors) {
+              instructions += `- ${err}\n`;
+            }
+            instructions += `\n`;
+          }
+
+          instructions += `### 📋 执行步骤\n\n`;
+          instructions += `**前置检查**: 请确认 Playwright MCP 已配置并可用\n\n`;
+
+          if (engine === 'tinypng') {
+            instructions += this.generateTinyPngInstructions(batches, actualOutputFormat);
+          } else {
+            instructions += this.generateAnyWebPInstructions(batches);
+          }
+
+          // 添加后续处理指令
+          instructions += `\n### 📤 后续处理\n\n`;
+          instructions += `压缩完成后，请执行以下操作:\n\n`;
+
+          for (const img of validImages) {
+            const newExt = actualOutputFormat || img.ext;
+            const isFormatChange = newExt !== img.ext;
+            const newFileName = `${img.name}.${newExt}`;
+            const downloadPath = path.join(path.dirname(img.path), `${img.name}-compressed.${newExt}`);
+
+            instructions += `**${path.basename(img.path)}**:\n`;
+            instructions += `1. 下载压缩结果到: \`${downloadPath}\`\n`;
+
+            if (ossDirectory) {
+              if (isFormatChange) {
+                instructions += `2. 上传到 OSS: \`upload_to_oss("${downloadPath}", "${ossDirectory}", "${newFileName}", "${configName}")\`\n`;
+                if (deleteOriginal) {
+                  instructions += `3. 删除原文件: 在 OSS 上删除 \`${ossDirectory}/${path.basename(img.path)}\`\n`;
+                }
+              } else {
+                instructions += `2. 覆盖上传到 OSS: \`upload_to_oss("${downloadPath}", "${ossDirectory}", "${path.basename(img.path)}", "${configName}")\`\n`;
+              }
+            }
+            instructions += `\n`;
+          }
+
+          // 返回信息
+          const resultInfo = {
+            engine,
+            outputFormat: actualOutputFormat,
+            deleteOriginal: actualOutputFormat ? deleteOriginal : false,
+            ossDirectory,
+            configName,
+            totalImages: validImages.length,
+            batches: batches.length,
+            batchSize,
+            images: validImages.map(img => ({
+              originalPath: img.path,
+              originalName: path.basename(img.path),
+              originalExt: img.ext,
+              originalSize: img.size,
+              newExt: actualOutputFormat || img.ext,
+              isFormatChange: (actualOutputFormat || img.ext) !== img.ext
+            }))
+          };
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: instructions
+              },
+              {
+                type: "text",
+                text: `\n---\n**压缩任务数据 (JSON)**:\n\`\`\`json\n${JSON.stringify(resultInfo, null, 2)}\n\`\`\``
+              }
+            ]
+          };
+        } catch (error) {
+          Logger.error(`生成压缩指令出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `生成压缩指令失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+  }
+
+  // 生成 TinyPNG 自动化指令
+  private generateTinyPngInstructions(batches: { path: string; name: string; ext: string; size: number }[][], outputFormat: string | null): string {
+    let instructions = '';
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      instructions += `#### 批次 ${i + 1}/${batches.length}\n\n`;
+      instructions += `**文件**: ${batch.map(img => path.basename(img.path)).join(', ')}\n\n`;
+
+      instructions += `1. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://tinypng.com/\`\n`;
+      instructions += `2. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成\n`;
+      instructions += `3. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
+      for (const img of batch) {
+        instructions += `   - \`${img.path}\`\n`;
+      }
+      instructions += `4. **等待压缩**: 使用 \`browser_wait_for\` 等待 "Download all" 或各文件的 "download" 按钮出现\n`;
+
+      if (outputFormat && outputFormat !== 'png') {
+        instructions += `5. **选择输出格式**: \n`;
+        instructions += `   - 点击压缩结果右侧的格式选择下拉框\n`;
+        instructions += `   - 选择 "${outputFormat.toUpperCase()}"\n`;
+      }
+
+      instructions += `${outputFormat && outputFormat !== 'png' ? '6' : '5'}. **下载结果**: 点击 "Download all" 或逐个下载\n`;
+
+      if (i < batches.length - 1) {
+        instructions += `${outputFormat && outputFormat !== 'png' ? '7' : '6'}. **刷新页面**: 使用 \`browser_navigate\` 重新访问 \`https://tinypng.com/\` 准备下一批\n`;
+      }
+      instructions += `\n`;
+    }
+
+    return instructions;
+  }
+
+  // 生成 AnyWebP 自动化指令
+  private generateAnyWebPInstructions(batches: { path: string; name: string; ext: string; size: number }[][]): string {
+    let instructions = '';
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      instructions += `#### 批次 ${i + 1}/${batches.length}\n\n`;
+      instructions += `**文件**: ${batch.map(img => path.basename(img.path)).join(', ')}\n\n`;
+
+      instructions += `1. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://anywebp.com/convert-to-webp.html\`\n`;
+      instructions += `2. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成，找到 "Drop your images here" 区域\n`;
+      instructions += `3. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
+      for (const img of batch) {
+        instructions += `   - \`${img.path}\`\n`;
+      }
+      instructions += `4. **等待转换**: 使用 \`browser_wait_for\` 等待转换完成，出现 "Download" 按钮\n`;
+      instructions += `5. **下载结果**: 点击 "Download All" 或逐个下载 WebP 文件\n`;
+
+      if (i < batches.length - 1) {
+        instructions += `6. **刷新页面**: 使用 \`browser_navigate\` 重新访问准备下一批\n`;
+      }
+      instructions += `\n`;
+    }
+
+    return instructions;
   }
 
   async connect(transport: Transport): Promise<void> {

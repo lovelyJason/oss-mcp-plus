@@ -29,6 +29,7 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 - 📥 支持从 URL 下载文件到本地
 - 📂 列出目录文件，支持通配符过滤
 - ✏️ 批量重命名文件，支持预览模式
+- 🗜️ 批量压缩图片（支持 TinyPNG / AnyWebP）
 
 ## 🔧 安装
 
@@ -216,6 +217,36 @@ pnpm inspect
 - `url`: 要下载的文件 URL（必需）
 - `targetDir`: 保存文件的本地目录路径（必需）
 - `fileName`: 保存的文件名（可选，默认从 URL 提取）
+
+### 6. 压缩图片 (`compress_images`) 🆕
+
+批量压缩图片工具，支持 TinyPNG 和 AnyWebP 两个在线压缩引擎。需配合 Playwright MCP 使用。
+
+**参数**:
+- `images`: 要压缩的本地图片路径数组（必需）
+- `engine`: 压缩引擎（必需），可选值:
+  - `tinypng`: 支持 PNG/JPEG/WebP 输出，每批最多 3 个文件
+  - `anywebp`: 固定输出 WebP，每批最多 20 个文件
+- `outputFormat`: 输出格式（可选，仅 tinypng 有效），可选值: `png`/`jpeg`/`webp`
+- `deleteOriginal`: 转格式时是否删除原文件（可选，默认 false）
+- `ossDirectory`: OSS 目标目录（可选）
+- `configName`: OSS 配置名称（可选，默认为 `default`）
+
+**使用示例**:
+
+```
+用户: 帮我压缩这几张图片并上传到 OSS
+AI:
+1. 调用 compress_images 获取压缩指令
+2. 使用 Playwright MCP 执行网页自动化压缩
+3. 下载压缩结果
+4. 使用 upload_to_oss 上传回 OSS
+```
+
+**注意事项**:
+- 需要同时配置 Playwright MCP 才能完成压缩
+- TinyPNG 免费版每次最多上传 3 个文件，超过会自动分批处理
+- 单个文件大小限制为 5MB
 
 ## 📦 发布
 
