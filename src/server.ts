@@ -540,7 +540,9 @@ export class OssMcpServer {
 
 第 2 步：如果图片在 OSS 上（必须在调用本工具之前完成！）
 - 先使用 list_oss_files 列出文件
-- 使用 download_file 将图片下载到本地临时目录（如 /tmp/compress-images/）
+- ⚠️ 重要：下载到【项目目录】下的 .tmp-compress/ 文件夹，不能用 /tmp/！
+  （Playwright MCP 只能访问项目目录内的文件）
+- 使用 download_file 将图片下载到项目目录下
 - 只有下载到本地后才能调用本工具
 
 第 3 步：调用本工具
@@ -691,8 +693,9 @@ export class OssMcpServer {
 ✅ 第 1 步：验证 Playwright MCP 可用
    → 调用 browser_snapshot，如果报错则停止并提示用户启用
 
-✅ 第 2 步：确保图片在本地
-   → OSS 图片必须先用 download_file 下载到本地
+✅ 第 2 步：确保图片在项目目录内
+   → OSS 图片必须先用 download_file 下载到【项目目录】下的 .tmp-compress/ 文件夹
+   → ⚠️ 不能用 /tmp/，Playwright 无法访问项目外的路径！
 
 ✅ 第 3 步：调用 check_compress_prerequisites
    → 验证文件并获取询问模板
@@ -865,29 +868,46 @@ export class OssMcpServer {
   private generateTinyPngInstructions(batches: { path: string; name: string; ext: string; size: number }[][], outputFormat: string | null): string {
     let instructions = '';
 
+    // 添加重要提示
+    instructions += `### ⚠️ 重要提示\n\n`;
+    instructions += `1. **图片必须在项目目录内**：Playwright MCP 只能访问项目目录下的文件。\n`;
+    instructions += `   - 不能使用 \`/tmp/\` 等系统临时目录\n`;
+    instructions += `   - 请将图片下载到项目根目录下的 \`.tmp-compress/\` 文件夹\n`;
+    instructions += `2. **上传前必须先触发文件选择框**：先点击上传区域，等待 Modal state 显示 "File chooser" 后再调用 \`browser_file_upload\`\n\n`;
+
+    const needsFormatConversion = outputFormat && outputFormat !== 'png';
+
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
       instructions += `#### 批次 ${i + 1}/${batches.length}\n\n`;
       instructions += `**文件**: ${batch.map(img => path.basename(img.path)).join(', ')}\n\n`;
 
-      instructions += `1. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://tinypng.com/\`\n`;
-      instructions += `2. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成\n`;
-      instructions += `3. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
+      let stepNum = 1;
+      instructions += `${stepNum++}. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://tinypng.com/\`\n`;
+      instructions += `${stepNum++}. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成\n`;
+
+      // 如果需要转换格式（WebP/JPEG），先开启开关
+      if (needsFormatConversion) {
+        instructions += `${stepNum++}. **开启格式转换开关**: \n`;
+        instructions += `   - 在页面底部找到 "Convert my images automatically" 开关\n`;
+        instructions += `   - 使用 \`browser_click\` 点击开关开启它（如果是关闭状态）\n`;
+        instructions += `   - 开启后会出现格式选择选项\n`;
+        instructions += `${stepNum++}. **选择输出格式**: \n`;
+        instructions += `   - 点击选择 "${outputFormat!.toUpperCase()}" 格式\n`;
+      }
+
+      instructions += `${stepNum++}. **触发文件选择框**: \n`;
+      instructions += `   - 使用 \`browser_click\` 点击上传区域（"Drop your .webp, .png or .jpg files here!" 文字区域）\n`;
+      instructions += `   - 等待 \`browser_snapshot\` 返回结果中 Modal state 显示 "[File chooser]"\n`;
+      instructions += `${stepNum++}. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
       for (const img of batch) {
         instructions += `   - \`${img.path}\`\n`;
       }
-      instructions += `4. **等待压缩**: 使用 \`browser_wait_for\` 等待 "Download all" 或各文件的 "download" 按钮出现\n`;
-
-      if (outputFormat && outputFormat !== 'png') {
-        instructions += `5. **选择输出格式**: \n`;
-        instructions += `   - 点击压缩结果右侧的格式选择下拉框\n`;
-        instructions += `   - 选择 "${outputFormat.toUpperCase()}"\n`;
-      }
-
-      instructions += `${outputFormat && outputFormat !== 'png' ? '6' : '5'}. **下载结果**: 点击 "Download all" 或逐个下载\n`;
+      instructions += `${stepNum++}. **等待压缩**: 使用 \`browser_wait_for\` 等待 "Download all" 或各文件的 "download" 按钮出现\n`;
+      instructions += `${stepNum++}. **下载结果**: 点击 "Download all" 或逐个下载\n`;
 
       if (i < batches.length - 1) {
-        instructions += `${outputFormat && outputFormat !== 'png' ? '7' : '6'}. **刷新页面**: 使用 \`browser_navigate\` 重新访问 \`https://tinypng.com/\` 准备下一批\n`;
+        instructions += `${stepNum++}. **刷新页面**: 使用 \`browser_navigate\` 重新访问 \`https://tinypng.com/\` 准备下一批\n`;
       }
       instructions += `\n`;
     }
@@ -899,22 +919,33 @@ export class OssMcpServer {
   private generateAnyWebPInstructions(batches: { path: string; name: string; ext: string; size: number }[][]): string {
     let instructions = '';
 
+    // 添加重要提示
+    instructions += `### ⚠️ 重要提示\n\n`;
+    instructions += `1. **图片必须在项目目录内**：Playwright MCP 只能访问项目目录下的文件。\n`;
+    instructions += `   - 不能使用 \`/tmp/\` 等系统临时目录\n`;
+    instructions += `   - 请将图片下载到项目根目录下的 \`.tmp-compress/\` 文件夹\n`;
+    instructions += `2. **上传前必须先触发文件选择框**：先点击上传区域，等待 Modal state 显示 "File chooser" 后再调用 \`browser_file_upload\`\n\n`;
+
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
       instructions += `#### 批次 ${i + 1}/${batches.length}\n\n`;
       instructions += `**文件**: ${batch.map(img => path.basename(img.path)).join(', ')}\n\n`;
 
-      instructions += `1. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://anywebp.com/convert-to-webp.html\`\n`;
-      instructions += `2. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成，找到 "Drop your images here" 区域\n`;
-      instructions += `3. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
+      let stepNum = 1;
+      instructions += `${stepNum++}. **打开网站**: 使用 \`browser_navigate\` 访问 \`https://anywebp.com/convert-to-webp.html\`\n`;
+      instructions += `${stepNum++}. **等待加载**: 使用 \`browser_snapshot\` 确认页面加载完成\n`;
+      instructions += `${stepNum++}. **触发文件选择框**: \n`;
+      instructions += `   - 使用 \`browser_click\` 点击 "Drop your images here!" 上传区域\n`;
+      instructions += `   - 等待 \`browser_snapshot\` 返回结果中 Modal state 显示 "[File chooser]"\n`;
+      instructions += `${stepNum++}. **上传文件**: 使用 \`browser_file_upload\` 上传以下文件:\n`;
       for (const img of batch) {
         instructions += `   - \`${img.path}\`\n`;
       }
-      instructions += `4. **等待转换**: 使用 \`browser_wait_for\` 等待转换完成，出现 "Download" 按钮\n`;
-      instructions += `5. **下载结果**: 点击 "Download All" 或逐个下载 WebP 文件\n`;
+      instructions += `${stepNum++}. **等待转换**: 使用 \`browser_wait_for\` 等待转换完成，出现 "Download" 按钮\n`;
+      instructions += `${stepNum++}. **下载结果**: 点击 "Download All" 或逐个下载 WebP 文件\n`;
 
       if (i < batches.length - 1) {
-        instructions += `6. **刷新页面**: 使用 \`browser_navigate\` 重新访问准备下一批\n`;
+        instructions += `${stepNum++}. **刷新页面**: 使用 \`browser_navigate\` 重新访问准备下一批\n`;
       }
       instructions += `\n`;
     }
