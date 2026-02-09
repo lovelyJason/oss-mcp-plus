@@ -529,18 +529,31 @@ export class OssMcpServer {
     // 工具：检查压缩图片的前置条件
     this.server.tool(
       "check_compress_prerequisites",
-      `检查图片压缩的前置条件。在调用 compress_images 之前必须先调用此工具！
+      `检查图片压缩的前置条件并返回用户询问模板。
 
-此工具会检查：
-1. Playwright MCP 是否可用（通过尝试调用 browser_snapshot）
-2. 返回需要 AI 向用户询问的问题
+【⚠️ 极其重要 - AI 必须严格按以下顺序执行】
 
-【重要】AI 必须按以下流程操作：
-1. 先调用此工具检查前置条件
-2. 根据返回的 questions 使用 AskUserQuestion 询问用户
-3. 收集用户选择后再调用 compress_images`,
+第 1 步：检查 Playwright MCP（必须在调用本工具之前完成！）
+- 调用 browser_snapshot 工具
+- 如果成功：继续执行
+- 如果失败/报错：立即停止，告知用户需要启用 Playwright MCP
+
+第 2 步：如果图片在 OSS 上（必须在调用本工具之前完成！）
+- 先使用 list_oss_files 列出文件
+- 使用 download_file 将图片下载到本地临时目录（如 /tmp/compress-images/）
+- 只有下载到本地后才能调用本工具
+
+第 3 步：调用本工具
+- 传入本地图片路径数组
+- 获取用户询问模板
+
+第 4 步：询问用户
+- 使用 AskUserQuestion 询问压缩引擎、输出格式等
+
+第 5 步：执行压缩
+- 调用 compress_images 工具`,
       {
-        images: z.array(z.string()).describe("要压缩的本地图片路径数组（用于验证文件存在）")
+        images: z.array(z.string()).describe("要压缩的【本地】图片路径数组。如果图片在 OSS 上，必须先用 download_file 下载到本地！")
       },
       async ({ images }) => {
         try {
@@ -671,19 +684,29 @@ export class OssMcpServer {
     // 工具：压缩图片（生成压缩指令，由 AI 调用 Playwright MCP 执行）
     this.server.tool(
       "compress_images",
-      `压缩图片工具。生成压缩指令，需配合 Playwright MCP 执行。
+      `压缩图片工具。生成 Playwright 自动化压缩指令。
 
-【重要】调用此工具前，AI 必须：
-1. 先调用 check_compress_prerequisites 检查前置条件
-2. 使用 browser_snapshot 确认 Playwright MCP 可用
-3. 使用 AskUserQuestion 询问用户选择引擎、输出格式、是否删除原文件
-4. 如果图片在 OSS 上，先用 download_file 下载到本地
+【⚠️ 禁止直接调用！必须先完成以下步骤】
 
-【工作流程】
-1. 调用此工具获取压缩指令
-2. 按指令使用 Playwright MCP 执行网页自动化
-3. 下载压缩结果到本地
-4. 使用 upload_to_oss 上传回 OSS`,
+✅ 第 1 步：验证 Playwright MCP 可用
+   → 调用 browser_snapshot，如果报错则停止并提示用户启用
+
+✅ 第 2 步：确保图片在本地
+   → OSS 图片必须先用 download_file 下载到本地
+
+✅ 第 3 步：调用 check_compress_prerequisites
+   → 验证文件并获取询问模板
+
+✅ 第 4 步：询问用户偏好
+   → 使用 AskUserQuestion 询问引擎、格式、是否删除原文件
+
+✅ 第 5 步：调用本工具
+   → 传入用户选择的参数
+
+【后续流程】
+1. 按返回的指令使用 Playwright MCP 执行网页自动化
+2. 下载压缩结果
+3. 使用 upload_to_oss 上传回 OSS`,
       {
         images: z.array(z.string()).describe("要压缩的本地图片路径数组"),
         engine: z.enum(['tinypng', 'anywebp']).describe("压缩引擎 (必须先询问用户选择)"),
