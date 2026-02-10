@@ -40,7 +40,9 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 
 ## 🔧 安装
 
-您可以通过npm或从源码安装：
+> 💡 **AI 工具用户**：如果你使用 Claude Code、Cursor 等 AI 工具，可直接跳转到 [🛠️ 与Claude/Cursor等AI工具集成](#-与claudecursor等ai工具集成) 章节进行配置。
+
+您可以通过 npm 或从源码安装：
 
 ### 使用npm安装
 
