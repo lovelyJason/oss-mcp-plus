@@ -394,6 +394,160 @@ export class OssMcpServer {
       }
     );
 
+    // 工具：删除OSS文件
+    // 检查环境变量是否允许删除操作
+    const allowDeleteOperation = process.env.ALLOW_DELETE_OPERATION === 'true';
+
+    this.server.tool(
+      "delete_oss_files",
+      `删除阿里云OSS中的文件。支持单个删除、批量删除和通配符匹配。
+
+【⚠️ 安全限制】此工具需要配置环境变量 ALLOW_DELETE_OPERATION=true 才能使用。
+当前状态: ${allowDeleteOperation ? '✅ 已启用' : '❌ 未启用（需要在 MCP 配置中添加 "env": { "ALLOW_DELETE_OPERATION": "true" }）'}
+
+【重要】首次调用必须使用 dryRun=true 预览，展示给用户确认后，用户同意才能用 dryRun=false 执行实际删除。禁止跳过预览直接执行！`,
+      {
+        directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
+        fileNames: z.array(z.string()).optional().describe("要删除的文件名数组（与 pattern 二选一）"),
+        pattern: z.string().optional().describe("文件名通配符模式（如 '*.tmp' 或 'test_*'），与 fileNames 二选一"),
+        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`),
+        dryRun: z.boolean().optional().describe("是否为预览模式（默认false）。为true时只返回将要删除的文件列表，不实际删除")
+      },
+      async ({ directory, fileNames, pattern, configName = 'default', dryRun = false }) => {
+        try {
+          // 检查是否允许删除操作
+          if (!allowDeleteOperation) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `❌ 删除操作被禁止！
+
+要启用删除功能，请在 MCP 配置中添加环境变量：
+
+{
+  "mcpServers": {
+    "oss-mcp-plus": {
+      "command": "npx",
+      "args": ["oss-mcp-plus", ...],
+      "env": {
+        "ALLOW_DELETE_OPERATION": "true"
+      }
+    }
+  }
+}
+
+这是一个安全措施，防止误删除文件。`
+              }]
+            };
+          }
+
+          Logger.log(`删除OSS文件: 目录=${directory}, 配置=${configName}, 预览模式=${dryRun}`);
+
+          // 必须提供 fileNames 或 pattern 之一
+          if (!fileNames && !pattern) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: "请提供 fileNames（文件名数组）或 pattern（通配符模式）之一"
+              }]
+            };
+          }
+
+          let filesToDelete: string[] = [];
+
+          if (fileNames && fileNames.length > 0) {
+            // 直接使用提供的文件名
+            filesToDelete = fileNames;
+          } else if (pattern) {
+            // 使用通配符匹配文件
+            const listResult = await ossService.listFiles(directory, configName, pattern);
+            if (!listResult.success) {
+              return {
+                isError: true,
+                content: [{
+                  type: "text",
+                  text: `列出文件失败: ${listResult.error}`
+                }]
+              };
+            }
+            filesToDelete = (listResult.files || []).map(f => f.name);
+          }
+
+          if (filesToDelete.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `没有找到匹配的文件${pattern ? ` (模式: ${pattern})` : ''}\n目录: ${directory || '根目录'}\n配置: ${configName}`
+              }]
+            };
+          }
+
+          if (dryRun) {
+            // 预览模式：只返回将要删除的文件列表
+            let resultText = `【预览模式】以下是将要删除的文件:\n\n`;
+            resultText += `配置: ${configName}\n`;
+            resultText += `目录: ${directory || '根目录'}\n`;
+            if (pattern) {
+              resultText += `匹配模式: ${pattern}\n`;
+            }
+            resultText += `文件数量: ${filesToDelete.length}\n\n`;
+            resultText += `文件列表:\n`;
+            for (const fileName of filesToDelete) {
+              resultText += `🗑️ ${fileName}\n`;
+            }
+            resultText += `\n⚠️ 确认要删除这些文件后，请使用 dryRun=false 执行实际删除。`;
+
+            return {
+              content: [{
+                type: "text",
+                text: resultText
+              }]
+            };
+          }
+
+          // 实际执行删除
+          const results = await ossService.batchDeleteFiles(filesToDelete, directory, configName);
+
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.filter(r => !r.success).length;
+
+          let resultText = `OSS文件删除完成:\n\n`;
+          resultText += `配置: ${configName}\n`;
+          resultText += `目录: ${directory || '根目录'}\n`;
+          resultText += `成功: ${successCount} 个, 失败: ${failCount} 个\n\n`;
+
+          if (results.length > 0) {
+            resultText += '详细结果:\n';
+            for (const r of results) {
+              if (r.success) {
+                resultText += `✅ ${r.fileName} 已删除\n`;
+              } else {
+                resultText += `❌ ${r.fileName} (${r.error})\n`;
+              }
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: resultText
+            }]
+          };
+        } catch (error) {
+          Logger.error(`删除OSS文件出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `删除OSS文件失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
     // 工具：下载文件
     this.server.tool(
       "download_file",

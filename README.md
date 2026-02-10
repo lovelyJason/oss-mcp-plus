@@ -1,8 +1,8 @@
 # OSS MCP Plus 🚀
 
-> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载，以及图片批量压缩等实用重磅工具。
-
 一个基于 Model Context Protocol (MCP) 的服务器，用于将文件上传到阿里云 OSS。此服务器使大型语言模型能够直接将文件上传到阿里云对象存储服务，并提供文件管理相关的实用工具。
+
+> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载，图片批量删除，以及图片批量压缩等实用重磅工具。
 
 <img width="1280" height="2034" alt="image" src="https://github.com/user-attachments/assets/c03c3716-109b-49a5-ab7c-113a6777c868" />
 
@@ -36,6 +36,7 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 - 📥 支持从 URL 下载文件到本地
 - 📂 列出本地/OSS目录文件，支持通配符过滤
 - ✏️ 批量重命名文件，支持预览模式
+- 🗑️ 批量删除文件，支持通配符和环境变量安全控制
 - 🗜️ 批量压缩图片（支持 TinyPNG / AnyWebP）
 
 ## 🔧 安装
@@ -145,7 +146,7 @@ pnpm inspect
 <a id="ai-integration"></a>
 ## 🛠️ 与Claude/Cursor等AI工具集成
 
-### Cursor配置方法
+### Cursor等配置方法
 
 1. 在Cursor中打开设置（Settings）
 2. 转到MCP服务器（MCP Servers）部分
@@ -185,7 +186,33 @@ pnpm inspect
 }
 ```
 
+### 启用删除功能（可选）
+
+出于安全考虑，删除 OSS 文件功能默认禁用。如需启用，请添加 `ALLOW_DELETE_OPERATION` 环境变量：
+
+```json
+{
+  "mcpServers": {
+    "oss-mcp-plus": {
+      "command": "npx",
+      "args": [
+        "oss-mcp-plus",
+        "--oss-config='{...}'",
+        "--stdio"
+      ],
+      "env": {
+        "ALLOW_DELETE_OPERATION": "true"
+      }
+    }
+  }
+}
+```
+
+> ⚠️ **安全提示**: 仅在确实需要删除功能时才启用此选项。未配置时，`delete_oss_files` 工具将拒绝执行任何删除操作。
+
 ### 推荐方式：使用 MCP Switch 客户端
+
+现在AI编辑器太多了，且不同软件的配置方式有细微差别，比如claude有cli命令可以管理，因此为了抹平这个差异造成的心智负担：
 
 借助本作者的另一客户端软件 [MCP Switch](https://github.com/lovelyJason/mcp-switch)，可以通过可视化界面轻松添加和管理 MCP 服务器：
 
@@ -245,7 +272,29 @@ pnpm inspect
 - `targetDir`: 保存文件的本地目录路径（必需）
 - `fileName`: 保存的文件名（可选，默认从 URL 提取）
 
-### 7. 压缩图片 (`compress_images`)
+### 7. 删除OSS文件 (`delete_oss_files`) 🆕
+
+删除阿里云OSS中的文件，支持单个删除、批量删除和通配符匹配。
+
+> ⚠️ **安全限制**: 此工具需要配置环境变量 `ALLOW_DELETE_OPERATION=true` 才能使用。详见 [启用删除功能](#启用删除功能可选) 章节。
+
+**参数**:
+- `directory`: OSS中的目录路径（必需），如 `images/icons`，根目录传空字符串 `''`
+- `fileNames`: 要删除的文件名数组（与 `pattern` 二选一）
+- `pattern`: 文件名通配符模式（与 `fileNames` 二选一），如 `*.tmp` 或 `test_*`
+- `configName`: OSS配置名称（可选，默认为 `default`）
+- `dryRun`: 是否为预览模式（可选，默认 false）。为 true 时只返回将要删除的文件列表，不实际删除
+
+**使用示例**:
+
+```
+用户: 删除 OSS 上 temp 目录下所有 .tmp 文件
+AI:
+1. 先用 dryRun=true 预览将要删除的文件
+2. 确认后用 dryRun=false 执行实际删除
+```
+
+### 8. 压缩图片 (`compress_images`)
 
 批量压缩图片工具，支持 TinyPNG 和 AnyWebP 两个在线压缩引擎。需配合 Playwright MCP 使用。
 

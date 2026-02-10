@@ -303,6 +303,69 @@ export class OssService {
 
     return results;
   }
+
+  /**
+   * 删除单个OSS文件
+   * @param key 文件路径
+   * @param configName 配置名称
+   * @returns 删除结果
+   */
+  async deleteFile(key: string, configName: string = 'default'): Promise<{ success: boolean; error?: string }> {
+    try {
+      const client = this.getClient(configName);
+      if (!client) {
+        return { success: false, error: `OSS config not found for: ${configName}` };
+      }
+
+      // 规范化路径：移除开头的斜杠
+      const normalizedKey = key.replace(/^\/+/, '');
+
+      // 检查文件是否存在
+      try {
+        await client.head(normalizedKey);
+      } catch (_e) {
+        return { success: false, error: `文件不存在: ${normalizedKey}` };
+      }
+
+      // 删除文件
+      await client.delete(normalizedKey);
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: `删除失败: ${(error as Error).message}` };
+    }
+  }
+
+  /**
+   * 批量删除OSS文件
+   * @param fileNames 文件名数组
+   * @param directory OSS目录路径
+   * @param configName 配置名称
+   * @returns 批量删除结果
+   */
+  async batchDeleteFiles(
+    fileNames: string[],
+    directory: string = '',
+    configName: string = 'default'
+  ): Promise<Array<{ fileName: string; success: boolean; error?: string }>> {
+    const results: Array<{ fileName: string; success: boolean; error?: string }> = [];
+
+    // 规范化目录路径
+    const normalizedDir = directory.replace(/^\/+|\/+$/g, '');
+    const dirPrefix = normalizedDir ? `${normalizedDir}/` : '';
+
+    for (const fileName of fileNames) {
+      const key = `${dirPrefix}${fileName}`;
+      const result = await this.deleteFile(key, configName);
+      results.push({
+        fileName,
+        success: result.success,
+        error: result.error
+      });
+    }
+
+    return results;
+  }
 }
 
 // 导出单例实例
