@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ossService } from "./services/oss.service.js";
+import { figmaService } from "./services/figma.service.js";
+import { getFigmaToken } from "./config/oss.config.js";
 import express, { Request, Response } from "express";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { IncomingMessage, ServerResponse } from "http";
@@ -1011,6 +1013,148 @@ export class OssMcpServer {
             content: [{
               type: "text",
               text: `生成压缩指令失败: ${error}`
+            }]
+          };
+        }
+      }
+    );
+
+    // 工具：导出 Figma 多倍图
+    const figmaTokenConfigured = !!getFigmaToken();
+
+    this.server.tool(
+      "export_figma_images",
+      `从 Figma 导出多倍图（支持 1x/2x/3x/4x）。使用 Figma REST API 直接导出指定倍率的图片，弥补 Figma MCP 不支持多倍图导出的不足。
+
+支持两种模式：
+- 导出到本地目录
+- 导出后直接上传到阿里云 OSS
+
+当前状态: ${figmaTokenConfigured ? '✅ Figma Token 已配置' : '❌ 未配置 Figma Token（需要 --figma-token 参数或 FIGMA_TOKEN 环境变量）'}
+
+【使用说明】
+- fileKey 和 nodeId 可从 Figma URL 中提取：
+  figma.com/design/:fileKey/:fileName?node-id=:nodeId
+  注意：URL 中的 node-id 用 "-" 分隔，需要替换为 ":"（如 "14-123" → "14:123"）
+- scales 支持 1/2/3/4，可同时导出多个倍率
+- 导出到本地时文件命名格式：{prefix}.png, {prefix}@2x.png, {prefix}@3x.png
+- 如果同时指定了 ossTargetDir，导出后会自动上传到 OSS`,
+      {
+        fileKey: z.string().describe("Figma 文件 Key（从 URL 中提取）"),
+        nodeId: z.string().describe("Figma 节点 ID（格式如 '14:123'，URL 中的 '-' 需替换为 ':'）"),
+        scales: z.array(z.number().min(0.01).max(4)).default([1, 2]).describe("导出倍率数组，默认 [1, 2]。常用值: [1, 2], [1, 2, 3]"),
+        format: z.enum(['png', 'jpg', 'svg', 'pdf']).default('png').describe("导出格式，默认 png"),
+        localTargetDir: z.string().describe("本地保存目录路径"),
+        fileNamePrefix: z.string().optional().describe("文件名前缀（可选，默认使用 nodeId 生成）"),
+        ossTargetDir: z.string().optional().describe("OSS 目标目录（可选，填写则导出后自动上传到 OSS）"),
+        configName: z.string().optional().describe(`OSS配置名称（默认为'default'，仅上传到 OSS 时需要）。可用配置: ${configNames.join(', ') || '无'}`)
+      },
+      async ({ fileKey, nodeId, scales, format, localTargetDir, fileNamePrefix, ossTargetDir, configName = 'default' }) => {
+        try {
+          if (!figmaTokenConfigured) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `❌ 未配置 Figma Token！
+
+请在 MCP 配置中添加 Figma Token：
+
+方式一：CLI 参数
+{
+  "command": "npx",
+  "args": ["oss-mcp-plus", "--figma-token=figd_xxxxx", "--oss-config='{...}'", "--stdio"]
+}
+
+方式二：环境变量
+{
+  "command": "npx",
+  "args": ["oss-mcp-plus", "--oss-config='{...}'", "--stdio"],
+  "env": {
+    "FIGMA_TOKEN": "figd_xxxxx"
+  }
+}
+
+获取 Token: Figma → Settings → Personal Access Tokens`
+              }]
+            };
+          }
+
+          Logger.log(`导出 Figma 多倍图: fileKey=${fileKey}, nodeId=${nodeId}, scales=${scales.join(',')}, format=${format}`);
+
+          // Step 1: 导出到本地
+          const results = await figmaService.exportToLocal(
+            { fileKey, nodeId, scales, format },
+            localTargetDir,
+            fileNamePrefix,
+          );
+
+          // Step 2: 如果指定了 OSS 目录，上传到 OSS
+          if (ossTargetDir) {
+            for (const result of results) {
+              if (!result.localPath) continue;
+              const uploadResult = await ossService.uploadFile({
+                filePath: result.localPath,
+                targetDir: ossTargetDir,
+                fileName: result.fileName,
+                configName,
+              });
+              if (uploadResult.success) {
+                result.ossUrl = uploadResult.url;
+              } else {
+                Logger.error(`上传 ${result.fileName} 到 OSS 失败: ${uploadResult.error}`);
+              }
+            }
+          }
+
+          // 构建结果文本
+          const sizeStr = (size: number) => size < 1024
+            ? `${size}B`
+            : size < 1024 * 1024
+              ? `${(size / 1024).toFixed(1)}KB`
+              : `${(size / 1024 / 1024).toFixed(1)}MB`;
+
+          let resultText = `## Figma 多倍图导出完成\n\n`;
+          resultText += `**文件 Key**: ${fileKey}\n`;
+          resultText += `**节点 ID**: ${nodeId}\n`;
+          resultText += `**格式**: ${format}\n`;
+          resultText += `**倍率**: ${scales.join('x, ')}x\n\n`;
+
+          resultText += `### 导出结果\n\n`;
+          for (const r of results) {
+            const localSize = r.localPath && fs.existsSync(r.localPath)
+              ? sizeStr(fs.statSync(r.localPath).size)
+              : '未知';
+
+            resultText += `**${r.fileName}** (${r.scale}x, ${localSize})\n`;
+            resultText += `- 本地路径: \`${r.localPath}\`\n`;
+            if (r.ossUrl) {
+              resultText += `- OSS URL: ${r.ossUrl}\n`;
+            }
+            resultText += `\n`;
+          }
+
+          if (ossTargetDir) {
+            const uploadedCount = results.filter(r => r.ossUrl).length;
+            resultText += `\n### OSS 上传\n`;
+            resultText += `- 目录: ${ossTargetDir}\n`;
+            resultText += `- 配置: ${configName}\n`;
+            resultText += `- 成功: ${uploadedCount}/${results.length}\n`;
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: resultText
+            }]
+          };
+        } catch (error) {
+          Logger.error(`导出 Figma 多倍图出错:`, error);
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `导出 Figma 多倍图失败: ${error instanceof Error ? error.message : error}`
             }]
           };
         }

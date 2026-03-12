@@ -21,9 +21,11 @@ export type OssConfig = z.infer<typeof OssConfigSchema>;
 export interface ServerConfig {
   port: number;
   ossConfig: Record<string, OssConfig>;
+  figmaToken?: string;
   configSources: {
     port: "cli" | "env" | "default";
     ossConfig: "cli" | "env" | "default";
+    figmaToken: "cli" | "env" | "none";
   };
 }
 
@@ -47,6 +49,10 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
         description: "服务器运行端口",
         default: 3000,
       },
+      "figma-token": {
+        type: "string",
+        description: "Figma Personal Access Token，用于导出多倍图",
+      },
     })
     .help()
     .version("1.0.0")
@@ -58,6 +64,7 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
     configSources: {
       port: "default",
       ossConfig: "default",
+      figmaToken: "none",
     },
   };
 
@@ -101,6 +108,15 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
     }
   });
 
+  // 处理 Figma Token
+  if (argv["figma-token"]) {
+    config.figmaToken = argv["figma-token"] as string;
+    config.configSources.figmaToken = "cli";
+  } else if (process.env.FIGMA_TOKEN) {
+    config.figmaToken = process.env.FIGMA_TOKEN;
+    config.configSources.figmaToken = "env";
+  }
+
   // 验证配置
   if (Object.keys(config.ossConfig).length === 0) {
     console.warn("未找到有效的OSS配置。服务器将启动，但上传功能将不可用。");
@@ -124,10 +140,28 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
     } else {
       console.log("- OSS配置: 未找到");
     }
+
+    if (config.figmaToken) {
+      console.log(`- Figma Token: ${maskSecret(config.figmaToken)} (来源: ${config.configSources.figmaToken})`);
+    } else {
+      console.log("- Figma Token: 未配置（Figma 导出功能不可用）");
+    }
+
     console.log(); // 空行，增加可读性
   }
 
   return config;
+}
+
+// 缓存的 Figma Token（避免重复解析）
+let cachedFigmaToken: string | undefined;
+
+// 获取 Figma Token
+export function getFigmaToken(): string | undefined {
+  if (cachedFigmaToken !== undefined) return cachedFigmaToken || undefined;
+  const { figmaToken } = getServerConfig(true);
+  cachedFigmaToken = figmaToken || '';
+  return figmaToken;
 }
 
 // 获取所有OSS配置

@@ -43,7 +43,8 @@ oss-mcp/
 │   ├── config/
 │   │   └── oss.config.ts        # 配置解析器 (CLI + 环境变量)
 │   └── services/
-│       └── oss.service.ts       # OSS 业务逻辑
+│       ├── oss.service.ts       # OSS 业务逻辑
+│       └── figma.service.ts     # Figma API 多倍图导出
 ├── dist/                        # 构建输出
 ├── package.json
 ├── tsconfig.json
@@ -85,15 +86,25 @@ pnpm pub:release
 
 ### MCP 工具
 
-服务器注册了两个 MCP 工具：
+服务器注册了以下 MCP 工具：
 
 1. **`upload_to_oss`** - 文件上传
-   - `filePath` (必需): 本地文件路径
-   - `targetDir` (可选): OSS 目标目录
-   - `fileName` (可选): 自定义文件名
-   - `configName` (可选): 使用的 OSS 配置名
+ - `filePath` (必需): 本地文件路径
+ - `targetDir` (可选): OSS 目标目录
+ - `fileName` (可选): 自定义文件名
+ - `configName` (可选): 使用的 OSS 配置名
 
 2. **`list_oss_configs`** - 列出可用的 OSS 配置
+
+3. **`export_figma_images`** - 从 Figma 导出多倍图
+ - `fileKey` (必需): Figma 文件 Key
+ - `nodeId` (必需): Figma 节点 ID（格式 "14:123"）
+ - `scales` (可选): 导出倍率数组，默认 [1, 2]
+ - `format` (可选): 导出格式 png/jpg/svg/pdf，默认 png
+ - `localTargetDir` (必需): 本地保存目录
+ - `fileNamePrefix` (可选): 文件名前缀
+ - `ossTargetDir` (可选): OSS 目标目录（填写则自动上传）
+ - `configName` (可选): OSS 配置名
 
 ### 传输模式
 
@@ -107,6 +118,13 @@ pnpm pub:release
 1. CLI 参数: `--oss-config='{"default":{...}}'`
 2. 环境变量: `OSS_CONFIG_DEFAULT`, `OSS_CONFIG_TEST` 等
 3. `.env` 文件
+
+### Figma Token 配置
+
+导出 Figma 多倍图需要 Figma Personal Access Token：
+
+1. CLI 参数: `--figma-token=figd_xxxxx`
+2. 环境变量: `FIGMA_TOKEN=figd_xxxxx`
 
 ## 代码规范
 
