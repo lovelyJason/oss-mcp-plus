@@ -43,7 +43,9 @@ oss-mcp/
 │   ├── config/
 │   │   └── oss.config.ts        # 配置解析器 (CLI + 环境变量)
 │   └── services/
-│       ├── oss.service.ts       # OSS 业务逻辑
+│       ├── oss.service.ts       # 阿里云 OSS 业务逻辑
+│       ├── s3.service.ts        # Amazon S3 业务逻辑
+│       ├── storage.service.ts   # 统一存储路由层
 │       └── figma.service.ts     # Figma API 多倍图导出
 ├── dist/                        # 构建输出
 ├── package.json

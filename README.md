@@ -1,8 +1,8 @@
 # OSS MCP Plus 🚀
 
-一个基于 Model Context Protocol (MCP) 的服务器，用于将文件上传到阿里云 OSS。此服务器使大型语言模型能够直接将文件上传到阿里云对象存储服务，并提供文件管理相关的实用工具。
+一个基于 Model Context Protocol (MCP) 的服务器，用于将文件上传到**阿里云 OSS** 和 **Amazon S3**。此服务器使大型语言模型能够直接将文件上传到对象存储服务，并提供文件管理相关的实用工具。
 
-> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载、图片批量删除、图片批量压缩，以及 **Figma 多倍图导出**等实用重磅工具。
+> Fork 自 [1yhy/oss-mcp](https://github.com/1yhy/oss-mcp)，新增批量重命名、目录列表、文件下载、图片批量删除、图片批量压缩、**Figma 多倍图导出**以及 **Amazon S3 支持**等实用重磅工具。
 
 <img width="1280" height="2034" alt="image" src="https://github.com/user-attachments/assets/c03c3716-109b-49a5-ab7c-113a6777c868" />
 
@@ -30,15 +30,16 @@ OSS MCP服务器能够与其他MCP工具无缝集成，为您提供强大的工�
 
 ## ✨ 功能特点
 
-- 📁 支持多个阿里云 OSS 配置
+- ☁️ **多平台支持**：同时支持阿里云 OSS 和 Amazon S3，通过 `provider` 字段区分（默认阿里云）
+- 📁 支持多个存储配置，可在不同平台/账号间切换
 - 🗂️ 可指定上传目录
 - 🔄 简单易用的接口
 - 📥 支持从 URL 下载文件到本地
-- 📂 列出本地/OSS目录文件，支持通配符过滤
+- 📂 列出本地/云端目录文件，支持通配符过滤
 - ✏️ 批量重命名文件，支持预览模式
 - 🗑️ 批量删除文件，支持通配符和环境变量安全控制
 - 🗜️ 批量压缩图片（支持 TinyPNG / AnyWebP）
-- 🎨 Figma 多倍图导出（支持 1x/2x/3x/4x，导出到本地或直接上传 OSS）
+- 🎨 Figma 多倍图导出（支持 1x/2x/3x/4x，导出到本地或直接上传到云端）
 
 ## 🔧 安装
 
@@ -83,36 +84,48 @@ pnpm build
 
 ## ⚙️ 配置
 
-您可以通过以下方式配置阿里云OSS参数：
+配置通过 `provider` 字段区分平台，不填写时默认为 `aliyun`（阿里云 OSS）。
 
 ### 方式一：使用.env文件
 
-在项目根目录创建`.env`文件，参考`.env.example`模板。您可以配置多个阿里云OSS服务：
+在项目根目录创建`.env`文件，参考`.env.example`模板：
 
 ```ini
-# 默认OSS配置
+# 默认 OSS 配置（阿里云，provider 可省略）
 OSS_CONFIG_DEFAULT={"region":"oss-cn-hangzhou","accessKeyId":"your-access-key-id","accessKeySecret":"your-access-key-secret","bucket":"your-bucket-name","endpoint":"oss-cn-hangzhou.aliyuncs.com"}
 
-# 其他OSS配置
+# 其他阿里云 OSS 配置
 OSS_CONFIG_TEST={"region":"oss-cn-beijing","accessKeyId":"your-access-key-id-2","accessKeySecret":"your-access-key-secret-2","bucket":"your-bucket-name-2","endpoint":"oss-cn-beijing.aliyuncs.com"}
+
+# Amazon S3 配置（使用 S3_CONFIG_* 前缀会自动设置 provider 为 s3）
+S3_CONFIG_AWS={"region":"us-east-1","accessKeyId":"AKIA...","secretAccessKey":"your-secret","bucket":"my-bucket"}
 ```
 
 ### 方式二：直接设置环境变量
 
-您也可以直接在系统中或启动命令中设置环境变量：
-
 ```bash
-# 设置环境变量并启动
-pnpm dev --oss-config='{ "default": { "region": "oss-cn-shenzhen", "accessKeyId": "YOUR_KEY", "accessKeySecret": "YOUR_SECRET", "bucket": "BUCKET_NAME", "endpoint": "oss-cn-shenzhen.aliyuncs.com" }, "test": { "region": "oss-cn-beijing", "accessKeyId": "YOUR_KEY", "accessKeySecret": "YOUR_SECRET", "bucket": "BUCKET_NAME", "endpoint": "oss-cn-beijing.aliyuncs.com" } }'
+# 混合配置阿里云和 S3
+pnpm dev --oss-config='{ "default": { "region": "oss-cn-shenzhen", "accessKeyId": "YOUR_KEY", "accessKeySecret": "YOUR_SECRET", "bucket": "BUCKET_NAME", "endpoint": "oss-cn-shenzhen.aliyuncs.com" }, "aws": { "provider": "s3", "region": "us-east-1", "accessKeyId": "AKIA...", "secretAccessKey": "YOUR_SECRET", "bucket": "BUCKET_NAME" } }'
 ```
 
 ## 🔍 参数说明
 
-- `region`: 阿里云OSS区域
-- `accessKeyId`: 阿里云访问密钥ID
-- `accessKeySecret`: 阿里云访问密钥Secret
-- `bucket`: OSS存储桶名称
-- `endpoint`: OSS终端节点
+### 通用参数
+
+- `provider`: 存储平台标识，可选值 `aliyun`（默认）或 `s3`
+- `region`: 区域
+- `accessKeyId`: 访问密钥 ID
+- `bucket`: 存储桶名称
+
+### 阿里云 OSS 专用参数
+
+- `accessKeySecret`: 阿里云访问密钥 Secret
+- `endpoint`: OSS 终端节点（必填）
+
+### Amazon S3 专用参数
+
+- `secretAccessKey`: AWS Secret Access Key
+- `endpoint`: 自定义端点（可选，用于 S3 兼容服务如 MinIO）
 
 ## 📋 使用方法
 
@@ -153,6 +166,8 @@ pnpm inspect
 2. 转到MCP服务器（MCP Servers）部分
 3. 添加新服务器配置：
 
+#### 仅阿里云 OSS（默认，无需 provider）
+
 ```json
 {
   "mcpServers": {
@@ -168,9 +183,7 @@ pnpm inspect
 }
 ```
 
-### 配置多个OSS账号
-
-使用环境变量方式可以轻松配置多个OSS账号：
+#### 仅 Amazon S3
 
 ```json
 {
@@ -179,7 +192,7 @@ pnpm inspect
       "command": "npx",
       "args": [
         "oss-mcp-plus",
-        "--oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}, \"test\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}}'",
+        "--oss-config='{\"default\":{\"provider\":\"s3\",\"region\":\"us-east-1\",\"accessKeyId\":\"AKIA...\",\"secretAccessKey\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\"}}'",
         "--stdio"
       ]
     }
@@ -187,9 +200,28 @@ pnpm inspect
 }
 ```
 
+#### 混合配置：阿里云 + S3
+
+```json
+{
+  "mcpServers": {
+    "oss-mcp-plus": {
+      "command": "npx",
+      "args": [
+        "oss-mcp-plus",
+        "--oss-config='{\"default\":{\"region\":\"oss-cn-shenzhen\",\"accessKeyId\":\"YOUR_KEY\",\"accessKeySecret\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\",\"endpoint\":\"oss-cn-shenzhen.aliyuncs.com\"}, \"aws\":{\"provider\":\"s3\",\"region\":\"us-east-1\",\"accessKeyId\":\"AKIA...\",\"secretAccessKey\":\"YOUR_SECRET\",\"bucket\":\"YOUR_BUCKET\"}}'",
+        "--stdio"
+      ]
+    }
+  }
+}
+```
+
+使用时通过 `configName` 参数切换：`configName: "default"` 走阿里云，`configName: "aws"` 走 S3。
+
 ### 启用删除功能（可选）
 
-出于安全考虑，删除 OSS 文件功能默认禁用。如需启用，请添加 `ALLOW_DELETE_OPERATION` 环境变量：
+出于安全考虑，删除文件功能默认禁用（阿里云 OSS 和 Amazon S3 均适用）。如需启用，请添加 `ALLOW_DELETE_OPERATION` 环境变量：
 
 ```json
 {
@@ -209,7 +241,7 @@ pnpm inspect
 }
 ```
 
-> ⚠️ **安全提示**: 仅在确实需要删除功能时才启用此选项。未配置时，`delete_oss_files` 工具将拒绝执行任何删除操作。
+> ⚠️ **安全提示**: 仅在确实需要删除功能时才启用此选项。未配置时，`delete_oss_files` 工具将拒绝执行任何删除操作（无论是阿里云还是 S3）。
 
 ### 启用 Figma 多倍图导出（可选）
 

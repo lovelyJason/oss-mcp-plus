@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ossService } from "./services/oss.service.js";
+import { storageService } from "./services/storage.service.js";
 import { figmaService } from "./services/figma.service.js";
 import { getFigmaToken } from "./config/oss.config.js";
 import express, { Request, Response } from "express";
@@ -46,19 +46,20 @@ export class OssMcpServer {
   }
 
   private registerTools(): void {
-    // 获取可用的OSS配置
-    const configs = ossService.getConfigs();
+    // 获取可用的存储配置
+    const configs = storageService.getConfigs();
     const configNames = configs.map(config => config.id);
+    const configDesc = configs.map(c => `${c.id}(${c.provider === 's3' ? 'S3' : 'OSS'})`).join(', ');
 
-    // 工具：上传文件到OSS
+    // 工具：上传文件到对象存储
     this.server.tool(
       "upload_to_oss",
-      "将文件上传到阿里云OSS",
+      "将文件上传到对象存储（阿里云 OSS / Amazon S3），通过 configName 选择目标平台",
       {
         filePath: z.string().describe("要上传的本地文件路径"),
         targetDir: z.string().optional().describe("OSS中的目标目录路径（可选）"),
         fileName: z.string().optional().describe("上传后的文件名（可选，默认使用原文件名）"),
-        configName: z.string().optional().describe(`OSS配置名称（可选，默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
+        configName: z.string().optional().describe(`存储配置名称（可选，默认为'default'）。可用配置: ${configDesc || '无'}`)
       },
       async ({ filePath, targetDir, fileName, configName }) => {
         try {
@@ -68,13 +69,11 @@ export class OssMcpServer {
             throw new Error("文件路径是必需的");
           }
 
-          // 检查文件是否存在
           if (!fs.existsSync(filePath)) {
             throw new Error(`文件不存在: ${filePath}`);
           }
 
-          // 执行上传
-          const result = await ossService.uploadFile({
+          const result = await storageService.uploadFile({
             filePath,
             targetDir,
             fileName,
@@ -112,33 +111,37 @@ export class OssMcpServer {
       }
     );
 
-    // 工具：列出可用的OSS配置
+    // 工具：列出可用的存储配置
     this.server.tool(
       "list_oss_configs",
-      "列出可用的阿里云OSS配置",
+      "列出可用的存储配置（阿里云 OSS / Amazon S3）",
       {},
       async () => {
         try {
-          const configs = ossService.getConfigs();
-          const configNames = configs.map(config => config.id);
+          const configs = storageService.getConfigs();
 
-          if (configNames.length === 0) {
+          if (configs.length === 0) {
             return {
               content: [{
                 type: "text",
-                text: "未找到OSS配置。请检查环境变量设置。"
+                text: "未找到存储配置。请检查环境变量或 CLI 参数设置。"
               }]
             };
           }
 
+          const lines = configs.map(c => {
+            const providerLabel = c.provider === 's3' ? 'Amazon S3' : '阿里云 OSS';
+            return `- ${c.id} (${providerLabel}) — Region: ${c.region}, Bucket: ${c.bucket}`;
+          });
+
           return {
             content: [{
               type: "text",
-              text: `可用的OSS配置:\n${configNames.map(name => `- ${name}`).join('\n')}`
+              text: `可用的存储配置:\n${lines.join('\n')}`
             }]
           };
         } catch (error) {
-          Logger.error(`获取OSS配置列表时出错:`, error);
+          Logger.error(`获取存储配置列表时出错:`, error);
           return {
             isError: true,
             content: [{
@@ -150,22 +153,22 @@ export class OssMcpServer {
       }
     );
 
-    // 工具：批量重命名OSS文件
+    // 工具：批量重命名存储文件
     this.server.tool(
       "batch_rename_files",
-      "批量重命名阿里云OSS文件。通过copy+delete实现。【重要】首次调用必须使用dryRun=true预览，展示给用户确认后，用户同意才能用dryRun=false执行实际重命名。禁止跳过预览直接执行！",
+      "批量重命名对象存储文件（阿里云 OSS / Amazon S3）。通过copy+delete实现。【重要】首次调用必须使用dryRun=true预览，展示给用户确认后，用户同意才能用dryRun=false执行实际重命名。禁止跳过预览直接执行！",
       {
         directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
         renameRules: z.array(z.object({
           oldName: z.string().describe("原文件名"),
           newName: z.string().describe("新文件名")
         })).describe("重命名规则数组，每项包含原文件名和新文件名"),
-        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`),
+        configName: z.string().optional().describe(`存储配置名称（默认为'default'）。可用配置: ${configDesc || '无'}`),
         dryRun: z.boolean().optional().describe("是否为预览模式（默认false）。为true时只返回将要执行的操作，不实际重命名")
       },
       async ({ directory, renameRules, configName = 'default', dryRun = false }) => {
         try {
-          Logger.log(`OSS批量重命名: 目录=${directory}, 规则数=${renameRules.length}, 配置=${configName}, 预览模式=${dryRun}`);
+          Logger.log(`批量重命名: 目录=${directory}, 规则数=${renameRules.length}, 配置=${configName}, 预览模式=${dryRun}`);
 
           let results: { oldName: string; newName: string; success: boolean; error?: string }[];
 
@@ -178,13 +181,13 @@ export class OssMcpServer {
             }));
           } else {
             // 实际执行OSS重命名
-            results = await ossService.batchRenameFiles(renameRules, directory, configName);
+            results = await storageService.batchRenameFiles(renameRules, directory, configName);
           }
 
           const successCount = results.filter(r => r.success).length;
           const failCount = results.filter(r => !r.success).length;
 
-          let resultText = dryRun ? `【预览模式】以下是将要执行的OSS文件重命名操作:\n\n` : `OSS文件批量重命名完成:\n\n`;
+          let resultText = dryRun ? `【预览模式】以下是将要执行的文件重命名操作:\n\n` : `文件批量重命名完成:\n\n`;
           resultText += `配置: ${configName}\n`;
           resultText += `目录: ${directory || '根目录'}\n`;
           resultText += `成功: ${successCount} 个, 失败: ${failCount} 个\n\n`;
@@ -207,12 +210,12 @@ export class OssMcpServer {
             }]
           };
         } catch (error) {
-          Logger.error(`OSS批量重命名出错:`, error);
+          Logger.error(`批量重命名出错:`, error);
           return {
             isError: true,
             content: [{
               type: "text",
-              text: `OSS批量重命名失败: ${error}`
+              text: `批量重命名失败: ${error}`
             }]
           };
         }
@@ -324,27 +327,27 @@ export class OssMcpServer {
       }
     );
 
-    // 工具：列出OSS目录文件
+    // 工具：列出对象存储目录文件
     this.server.tool(
       "list_oss_files",
-      "列出阿里云OSS指定目录下的所有文件。用于查看 OSS 中的文件以便进行重命名或其他操作。注意：如果要列出本地文件，请使用 list_directory_files 工具。",
+      "列出对象存储（阿里云 OSS / Amazon S3）指定目录下的所有文件。用于查看存储中的文件以便进行重命名或其他操作。注意：如果要列出本地文件，请使用 list_directory_files 工具。",
       {
         directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
         pattern: z.string().optional().describe("文件名过滤模式（可选），如 '*.png' 或 'icon_*'"),
-        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
+        configName: z.string().optional().describe(`存储配置名称（默认为'default'）。可用配置: ${configDesc || '无'}`)
       },
       async ({ directory, pattern, configName = 'default' }) => {
         try {
-          Logger.log(`列出OSS目录文件: ${directory || '根目录'}, 过滤: ${pattern || '无'}, 配置: ${configName}`);
+          Logger.log(`列出存储目录文件: ${directory || '根目录'}, 过滤: ${pattern || '无'}, 配置: ${configName}`);
 
-          const result = await ossService.listFiles(directory, configName, pattern);
+          const result = await storageService.listFiles(directory, configName, pattern);
 
           if (!result.success) {
             return {
               isError: true,
               content: [{
                 type: "text",
-                text: `列出OSS文件失败: ${result.error}`
+                text: `列出存储文件失败: ${result.error}`
               }]
             };
           }
@@ -355,7 +358,7 @@ export class OssMcpServer {
             return {
               content: [{
                 type: "text",
-                text: `OSS目录 ${directory || '根目录'} 下没有找到匹配的文件${pattern ? ` (过滤: ${pattern})` : ''}\n配置: ${configName}`
+                text: `目录 ${directory || '根目录'} 下没有找到匹配的文件${pattern ? ` (过滤: ${pattern})` : ''}\n配置: ${configName}`
               }]
             };
           }
@@ -366,7 +369,7 @@ export class OssMcpServer {
               ? `${(size / 1024).toFixed(1)}KB`
               : `${(size / 1024 / 1024).toFixed(1)}MB`;
 
-          let resultText = `OSS目录: ${directory || '根目录'}\n`;
+          let resultText = `目录: ${directory || '根目录'}\n`;
           resultText += `配置: ${configName}\n`;
           if (pattern) {
             resultText += `过滤: ${pattern}\n`;
@@ -384,12 +387,12 @@ export class OssMcpServer {
             }]
           };
         } catch (error) {
-          Logger.error(`列出OSS目录文件出错:`, error);
+          Logger.error(`列出存储目录文件出错:`, error);
           return {
             isError: true,
             content: [{
               type: "text",
-              text: `列出OSS目录失败: ${error}`
+              text: `列出存储目录失败: ${error}`
             }]
           };
         }
@@ -402,7 +405,7 @@ export class OssMcpServer {
 
     this.server.tool(
       "delete_oss_files",
-      `删除阿里云OSS中的文件。支持单个删除、批量删除和通配符匹配。
+      `删除对象存储（阿里云 OSS / Amazon S3）中的文件。支持单个删除、批量删除和通配符匹配。
 
 【⚠️ 安全限制】此工具需要配置环境变量 ALLOW_DELETE_OPERATION=true 才能使用。
 当前状态: ${allowDeleteOperation ? '✅ 已启用' : '❌ 未启用（需要在 MCP 配置中添加 "env": { "ALLOW_DELETE_OPERATION": "true" }）'}
@@ -412,7 +415,7 @@ export class OssMcpServer {
         directory: z.string().describe("OSS中的目录路径（如 'images/icons'，根目录传空字符串 ''）"),
         fileNames: z.array(z.string()).optional().describe("要删除的文件名数组（与 pattern 二选一）"),
         pattern: z.string().optional().describe("文件名通配符模式（如 '*.tmp' 或 'test_*'），与 fileNames 二选一"),
-        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`),
+        configName: z.string().optional().describe(`存储配置名称（默认为'default'）。可用配置: ${configDesc || '无'}`),
         dryRun: z.boolean().optional().describe("是否为预览模式（默认false）。为true时只返回将要删除的文件列表，不实际删除")
       },
       async ({ directory, fileNames, pattern, configName = 'default', dryRun = false }) => {
@@ -444,7 +447,7 @@ export class OssMcpServer {
             };
           }
 
-          Logger.log(`删除OSS文件: 目录=${directory}, 配置=${configName}, 预览模式=${dryRun}`);
+          Logger.log(`删除存储文件: 目录=${directory}, 配置=${configName}, 预览模式=${dryRun}`);
 
           // 必须提供 fileNames 或 pattern 之一
           if (!fileNames && !pattern) {
@@ -464,7 +467,7 @@ export class OssMcpServer {
             filesToDelete = fileNames;
           } else if (pattern) {
             // 使用通配符匹配文件
-            const listResult = await ossService.listFiles(directory, configName, pattern);
+            const listResult = await storageService.listFiles(directory, configName, pattern);
             if (!listResult.success) {
               return {
                 isError: true,
@@ -510,12 +513,12 @@ export class OssMcpServer {
           }
 
           // 实际执行删除
-          const results = await ossService.batchDeleteFiles(filesToDelete, directory, configName);
+          const results = await storageService.batchDeleteFiles(filesToDelete, directory, configName);
 
           const successCount = results.filter(r => r.success).length;
           const failCount = results.filter(r => !r.success).length;
 
-          let resultText = `OSS文件删除完成:\n\n`;
+          let resultText = `文件删除完成:\n\n`;
           resultText += `配置: ${configName}\n`;
           resultText += `目录: ${directory || '根目录'}\n`;
           resultText += `成功: ${successCount} 个, 失败: ${failCount} 个\n\n`;
@@ -538,12 +541,12 @@ export class OssMcpServer {
             }]
           };
         } catch (error) {
-          Logger.error(`删除OSS文件出错:`, error);
+          Logger.error(`删除存储文件出错:`, error);
           return {
             isError: true,
             content: [{
               type: "text",
-              text: `删除OSS文件失败: ${error}`
+              text: `删除存储文件失败: ${error}`
             }]
           };
         }
@@ -872,7 +875,7 @@ export class OssMcpServer {
         outputFormat: z.enum(['png', 'jpeg', 'webp']).optional().describe("输出格式 (必须先询问用户选择，仅 tinypng 支持多格式)"),
         deleteOriginal: z.boolean().optional().describe("转格式时是否删除原文件 (必须先询问用户选择)"),
         ossDirectory: z.string().optional().describe("OSS 目标目录 (用于上传压缩后的文件)"),
-        configName: z.string().optional().describe(`OSS配置名称（默认为'default'）。可用配置: ${configNames.join(', ') || '无'}`)
+        configName: z.string().optional().describe(`存储配置名称（默认为'default'）。可用配置: ${configDesc || '无'}`)
       },
       async ({ images, engine, outputFormat, deleteOriginal = false, ossDirectory, configName = 'default' }) => {
         try {
@@ -1028,7 +1031,7 @@ export class OssMcpServer {
 
 支持两种模式：
 - 导出到本地目录
-- 导出后直接上传到阿里云 OSS
+- 导出后直接上传到对象存储（阿里云 OSS / Amazon S3）
 
 当前状态: ${figmaTokenConfigured ? '✅ Figma Token 已配置' : '❌ 未配置 Figma Token（需要 --figma-token 参数或 FIGMA_TOKEN 环境变量）'}
 
@@ -1046,8 +1049,8 @@ export class OssMcpServer {
         format: z.enum(['png', 'jpg', 'svg', 'pdf']).default('png').describe("导出格式，默认 png"),
         localTargetDir: z.string().describe("本地保存目录路径"),
         fileNamePrefix: z.string().optional().describe("文件名前缀（可选，默认使用 nodeId 生成）"),
-        ossTargetDir: z.string().optional().describe("OSS 目标目录（可选，填写则导出后自动上传到 OSS）"),
-        configName: z.string().optional().describe(`OSS配置名称（默认为'default'，仅上传到 OSS 时需要）。可用配置: ${configNames.join(', ') || '无'}`)
+        ossTargetDir: z.string().optional().describe("对象存储目标目录（可选，填写则导出后自动上传）"),
+        configName: z.string().optional().describe(`存储配置名称（默认为'default'，仅上传时需要）。可用配置: ${configDesc || '无'}`)
       },
       async ({ fileKey, nodeId, scales, format, localTargetDir, fileNamePrefix, ossTargetDir, configName = 'default' }) => {
         try {
@@ -1093,7 +1096,7 @@ export class OssMcpServer {
           if (ossTargetDir) {
             for (const result of results) {
               if (!result.localPath) continue;
-              const uploadResult = await ossService.uploadFile({
+              const uploadResult = await storageService.uploadFile({
                 filePath: result.localPath,
                 targetDir: ossTargetDir,
                 fileName: result.fileName,

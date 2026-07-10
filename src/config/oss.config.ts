@@ -5,7 +5,7 @@ import { z } from "zod";
 
 config();
 
-// OSS配置验证Schema
+// 阿里云 OSS 配置验证 Schema（保持向后兼容）
 export const OssConfigSchema = z.object({
   region: z.string(),
   accessKeyId: z.string(),
@@ -13,14 +13,38 @@ export const OssConfigSchema = z.object({
   bucket: z.string(),
   endpoint: z.string(),
 });
-
-// 导出OSS配置类型
 export type OssConfig = z.infer<typeof OssConfigSchema>;
+
+// Amazon S3 配置验证 Schema
+export const S3ConfigSchema = z.object({
+  region: z.string(),
+  accessKeyId: z.string(),
+  secretAccessKey: z.string(),
+  bucket: z.string(),
+  endpoint: z.string().optional(),
+});
+export type S3Config = z.infer<typeof S3ConfigSchema>;
+
+// 存储平台类型
+export type StorageProvider = 'aliyun' | 's3';
+
+// 带平台标识的统一存储配置
+export type StorageConfig =
+  | (OssConfig & { provider: 'aliyun' })
+  | (S3Config & { provider: 's3' });
+
+// 解析存储配置，根据 provider 字段自动选择 Schema
+function parseStorageConfig(raw: Record<string, unknown>): StorageConfig {
+  if (raw.provider === 's3') {
+    return { ...S3ConfigSchema.parse(raw), provider: 's3' };
+  }
+  return { ...OssConfigSchema.parse(raw), provider: 'aliyun' };
+}
 
 // 服务器配置接口
 export interface ServerConfig {
   port: number;
-  ossConfig: Record<string, OssConfig>;
+  ossConfig: Record<string, StorageConfig>;
   figmaToken?: string;
   configSources: {
     port: "cli" | "env" | "default";
@@ -29,20 +53,17 @@ export interface ServerConfig {
   };
 }
 
-// 掩码函数，用于打印敏感信息
 function maskSecret(secret: string): string {
   if (secret.length <= 4) return "****";
   return `${secret.substring(0, 4)}****${secret.slice(-4)}`;
 }
 
-// 获取服务器配置
 export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
-  // 解析命令行参数
   const argv = yargs(hideBin(process.argv))
     .options({
       "oss-config": {
         type: "string",
-        description: "OSS配置JSON字符串",
+        description: "存储配置JSON字符串（支持阿里云 OSS 和 Amazon S3）",
       },
       port: {
         type: "number",
@@ -58,7 +79,7 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
     .version("1.0.0")
     .parseSync();
 
-  const config: ServerConfig = {
+  const serverConfig: ServerConfig = {
     port: 3000,
     ossConfig: {},
     configSources: {
@@ -68,95 +89,111 @@ export function getServerConfig(isStdioMode: boolean = false): ServerConfig {
     },
   };
 
-  // 处理端口配置
   if (argv.port) {
-    config.port = argv.port;
-    config.configSources.port = "cli";
+    serverConfig.port = argv.port;
+    serverConfig.configSources.port = "cli";
   } else if (process.env.PORT) {
-    config.port = parseInt(process.env.PORT, 10);
-    config.configSources.port = "env";
+    serverConfig.port = parseInt(process.env.PORT, 10);
+    serverConfig.configSources.port = "env";
   }
 
-  // 处理OSS配置 - 首先检查命令行参数
+  // 处理存储配置 - CLI 参数优先
   if (argv["oss-config"]) {
-    const allOssConfigs = JSON.parse(argv["oss-config"] as string);
+    const allConfigs = JSON.parse(argv["oss-config"] as string);
 
-     if (allOssConfigs.region && allOssConfigs.accessKeyId) {
-       config.ossConfig.default = OssConfigSchema.parse(allOssConfigs);
-     } else {
-       Object.entries(allOssConfigs).forEach(([name, cfg]) => {
-         config.ossConfig[name.toLowerCase()] = OssConfigSchema.parse(cfg);
-       });
-     }
-     config.configSources.ossConfig = "cli";
+    if (allConfigs.region && (allConfigs.accessKeyId || allConfigs.accessKeySecret || allConfigs.secretAccessKey)) {
+      serverConfig.ossConfig.default = parseStorageConfig(allConfigs);
+    } else {
+      Object.entries(allConfigs).forEach(([name, cfg]) => {
+        serverConfig.ossConfig[name.toLowerCase()] = parseStorageConfig(cfg as Record<string, unknown>);
+      });
+    }
+    serverConfig.configSources.ossConfig = "cli";
   } else if (process.env.OSS_CONFIG_DEFAULT) {
-    const ossConfig = JSON.parse(process.env.OSS_CONFIG_DEFAULT)
-    config.ossConfig.default = OssConfigSchema.parse(ossConfig);
-    config.configSources.ossConfig = "env";
+    const ossConfig = JSON.parse(process.env.OSS_CONFIG_DEFAULT);
+    serverConfig.ossConfig.default = parseStorageConfig(ossConfig);
+    serverConfig.configSources.ossConfig = "env";
   }
 
-  // 检查其他命名的OSS配置
+  // 检查其他命名配置：OSS_CONFIG_* 和 S3_CONFIG_*
   Object.entries(process.env).forEach(([key, value]) => {
-    if (key.startsWith("OSS_CONFIG_") && key !== "OSS_CONFIG_DEFAULT" && value) {
+    if (key === "OSS_CONFIG_DEFAULT" || !value) return;
+
+    let configName: string | null = null;
+    let forceProvider: StorageProvider | null = null;
+
+    if (key.startsWith("OSS_CONFIG_")) {
+      configName = key.replace("OSS_CONFIG_", "").toLowerCase();
+    } else if (key.startsWith("S3_CONFIG_")) {
+      configName = key.replace("S3_CONFIG_", "").toLowerCase();
+      forceProvider = 's3';
+    }
+
+    if (configName) {
       try {
-        const configName = key.replace("OSS_CONFIG_", "").toLowerCase();
-        const ossConfig = JSON.parse(value);
-        config.ossConfig[configName] = OssConfigSchema.parse(ossConfig);
+        const parsed = JSON.parse(value);
+        if (forceProvider) {
+          parsed.provider = forceProvider;
+        }
+        serverConfig.ossConfig[configName] = parseStorageConfig(parsed);
       } catch (error) {
         console.error(`解析环境变量${key}失败:`, error);
       }
     }
   });
 
-  // 处理 Figma Token
+  // Figma Token
   if (argv["figma-token"]) {
-    config.figmaToken = argv["figma-token"] as string;
-    config.configSources.figmaToken = "cli";
+    serverConfig.figmaToken = argv["figma-token"] as string;
+    serverConfig.configSources.figmaToken = "cli";
   } else if (process.env.FIGMA_TOKEN) {
-    config.figmaToken = process.env.FIGMA_TOKEN;
-    config.configSources.figmaToken = "env";
+    serverConfig.figmaToken = process.env.FIGMA_TOKEN;
+    serverConfig.configSources.figmaToken = "env";
   }
 
-  // 验证配置
-  if (Object.keys(config.ossConfig).length === 0) {
-    console.warn("未找到有效的OSS配置。服务器将启动，但上传功能将不可用。");
+  if (Object.keys(serverConfig.ossConfig).length === 0) {
+    console.warn("未找到有效的存储配置。服务器将启动，但上传功能将不可用。");
   }
 
-  // 打印配置信息（非stdio模式下）
   if (!isStdioMode) {
     console.log("\n配置信息:");
-    console.log(`- 端口: ${config.port} (来源: ${config.configSources.port})`);
+    console.log(`- 端口: ${serverConfig.port} (来源: ${serverConfig.configSources.port})`);
 
-    if (Object.keys(config.ossConfig).length > 0) {
-      console.log("- OSS配置:");
-      Object.entries(config.ossConfig).forEach(([name, cfg]) => {
-        console.log(`  - ${name}:`);
+    if (Object.keys(serverConfig.ossConfig).length > 0) {
+      console.log("- 存储配置:");
+      Object.entries(serverConfig.ossConfig).forEach(([name, cfg]) => {
+        const providerLabel = cfg.provider === 's3' ? 'Amazon S3' : '阿里云 OSS';
+        console.log(`  - ${name} (${providerLabel}):`);
         console.log(`    Region: ${cfg.region}`);
-        console.log(`    Endpoint: ${cfg.endpoint}`);
         console.log(`    Bucket: ${cfg.bucket}`);
-        console.log(`    AccessKeyId: ${maskSecret(cfg.accessKeyId)}`);
-        console.log(`    AccessKeySecret: ${maskSecret(cfg.accessKeySecret)}`);
+        if (cfg.provider === 'aliyun') {
+          console.log(`    Endpoint: ${cfg.endpoint}`);
+          console.log(`    AccessKeyId: ${maskSecret(cfg.accessKeyId)}`);
+          console.log(`    AccessKeySecret: ${maskSecret(cfg.accessKeySecret)}`);
+        } else {
+          if (cfg.endpoint) console.log(`    Endpoint: ${cfg.endpoint}`);
+          console.log(`    AccessKeyId: ${maskSecret(cfg.accessKeyId)}`);
+          console.log(`    SecretAccessKey: ${maskSecret(cfg.secretAccessKey)}`);
+        }
       });
     } else {
-      console.log("- OSS配置: 未找到");
+      console.log("- 存储配置: 未找到");
     }
 
-    if (config.figmaToken) {
-      console.log(`- Figma Token: ${maskSecret(config.figmaToken)} (来源: ${config.configSources.figmaToken})`);
+    if (serverConfig.figmaToken) {
+      console.log(`- Figma Token: ${maskSecret(serverConfig.figmaToken)} (来源: ${serverConfig.configSources.figmaToken})`);
     } else {
       console.log("- Figma Token: 未配置（Figma 导出功能不可用）");
     }
 
-    console.log(); // 空行，增加可读性
+    console.log();
   }
 
-  return config;
+  return serverConfig;
 }
 
-// 缓存的 Figma Token（避免重复解析）
 let cachedFigmaToken: string | undefined;
 
-// 获取 Figma Token
 export function getFigmaToken(): string | undefined {
   if (cachedFigmaToken !== undefined) return cachedFigmaToken || undefined;
   const { figmaToken } = getServerConfig(true);
@@ -164,20 +201,44 @@ export function getFigmaToken(): string | undefined {
   return figmaToken;
 }
 
-// 获取所有OSS配置
-export function getAllOssConfigs(): Record<string, OssConfig> {
+// 获取所有存储配置（包含阿里云和 S3）
+export function getAllStorageConfigs(): Record<string, StorageConfig> {
   const { ossConfig } = getServerConfig(true);
   return ossConfig;
 }
 
-// 获取特定名称的OSS配置
-export function getOssConfig(name: string = 'default'): OssConfig | null {
-  const configs = getAllOssConfigs();
-  const normalizedName = name.toLowerCase();
-  return configs[normalizedName] || null;
+// 获取所有阿里云 OSS 配置（向后兼容，仅返回 aliyun 类型）
+export function getAllOssConfigs(): Record<string, OssConfig> {
+  const all = getAllStorageConfigs();
+  const result: Record<string, OssConfig> = {};
+  for (const [name, cfg] of Object.entries(all)) {
+    if (cfg.provider === 'aliyun') {
+      const { provider: _, ...ossConfig } = cfg;
+      result[name] = ossConfig;
+    }
+  }
+  return result;
 }
 
-// 获取可用的OSS配置名称列表
+// 获取特定存储配置
+export function getStorageConfig(name: string = 'default'): StorageConfig | null {
+  const configs = getAllStorageConfigs();
+  return configs[name.toLowerCase()] || null;
+}
+
+// 获取特定阿里云 OSS 配置（向后兼容）
+export function getOssConfig(name: string = 'default'): OssConfig | null {
+  const config = getStorageConfig(name);
+  if (!config || config.provider !== 'aliyun') return null;
+  const { provider: _, ...ossConfig } = config;
+  return ossConfig;
+}
+
+// 获取所有可用配置名称
+export function getAvailableConfigNames(): string[] {
+  return Object.keys(getAllStorageConfigs());
+}
+
 export function getAvailableOssConfigNames(): string[] {
-  return Object.keys(getAllOssConfigs());
+  return getAvailableConfigNames();
 }
